@@ -152,6 +152,24 @@ property this overlay exists to provide.
 
 ## 7. Verify
 
+This whole sequence was rehearsed on 2026-09-10 against the production overlay
+with real generated secrets — not the development placeholder — before it was
+ever pointed at a paid host. What the rehearsal established:
+
+- `up -d --build --wait` brings all eleven containers healthy, and the
+  fail-closed key guard accepts a genuine `PII_KEY_HEX` (it refuses the
+  placeholder, which is the point).
+- `--profile demo run --rm demo` seeds and runs the pipeline from inside the
+  compose network, reaching `postgres`, `registry` and `publicapi` by name.
+- **Caddy is the only process publishing a host port.** Measured with `nc`
+  against the running stack: 80 open; 5432, 8080, 8081, 8082 and 8545 all
+  refused. Postgres, the registry, the public API, the dashboard container and
+  the development chain are reachable only inside the compose network.
+- Through Caddy on port 80: `/health` returns ok, `/v1/ledger/anchors/verify`
+  returns `verified` with the database root and the chain root identical, and
+  `/v1/stats` withholds the two counties under ten.
+
+
 ```bash
 curl -s localhost/health
 curl -s localhost/v1/risk/current | head -c 300
