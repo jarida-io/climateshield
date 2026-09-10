@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Overlay for a host too small to build or to run the development chain.
+#
+#   docker compose -f docker-compose.yml \
+#                  -f deploy/docker-compose.prod.yml \
+#                  -f deploy/docker-compose.smallhost.yml up -d
+#
+# It changes two things and says plainly what each costs.
+#
+# 1. IT DOES NOT BUILD. Every service runs a prebuilt `:deploy-amd64` image
+#    loaded onto the host with `docker load`. The first build compiles eight Go
+#    binaries and bundles the dashboard, which needs gigabytes of RAM; a
+#    458 MB droplet cannot do it, and npm dies there long before Go does.
+#    Build on a workstation for linux/amd64 and ship the images:
+#
+#      docker buildx build --platform linux/amd64 --build-arg CMD=<svc> \
+#        -f deploy/go.Dockerfile -t climateshield-<svc>:deploy-amd64 --load .
+#      docker save climateshield-*:deploy-amd64 | gzip -1 > images.tar.gz
+#      scp images.tar.gz root@HOST: && ssh root@HOST \
+#        'gunzip -c images.tar.gz | docker load'
+#
+#    Build the dashboard image from an already-built `web/dist` rather than
+#    running npm under emulation — the bundle is static assets and identical on
+#    every architecture, so emulating the build only buys you the memory
+#    failure.
+#
+# 2. IT RUNS NO CHAIN. The foundry image is 585 MB and anvil's own memory is
+#    more than a 458 MB box has spare, so `anvil` is disabled here and the
+#    ledger runs `ANCHOR_MODE=local`: daily Merkle roots are recorded in the
+#    anchors table of this system's own database and nowhere else.
+#
+#    THIS IS A REAL LOSS OF FUNCTION, not a configuration detail. The chain
+#    anchor is one of the three things the funding proposal promised, and on a
+#    host running this overlay it is not demonstrated. Nothing lies about it:
+#    the anchor note on GET /v1/ledger/summary is computed from the newest
+#    anchor row, so it will say no blockchain is written to by this system, and
+#    the dashboard's History view will report the same. To demonstrate the
+#    pillar, deploy without this overlay on a host with enough room for the
+#    chain — 2 GB of RAM is a sensible floor, and 4 GB if you also want to
+#    build there.
+services:
+  anvil:
+    # A profile no command enables, which is how a compose overlay removes a
+    # service it cannot host. Nothing may depend on it while this is in force.
+    profiles: ["chain-disabled"]
+
+  migrate:
+    image: climateshield-migrate:deploy-amd64
+
+  ingestor:
+    image: climateshield-ingestor:deploy-amd64
+
+  predictor:
+    image: climateshield-predictor:deploy-amd64
+
+  notifier:
+    image: climateshield-notifier:deploy-amd64
+
+  registry:
+    image: climateshield-registry:deploy-amd64
+
+  briefing:
+    image: climateshield-briefing:deploy-amd64
+
+  web:
+    image: climateshield-web:deploy-amd64
+
+  ledger:
+    image: climateshield-ledger:deploy-amd64
+    # Replaces the dependency set outright: the base file waits for anvil to be
+    # healthy, and anvil is not running here.
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      ANCHOR_MODE: local
+
+  publicapi:
+    image: climateshield-publicapi:deploy-amd64
+    environment:
+      # With no chain to re-read from, the verification endpoint reports
+      # "unavailable" and the reason, which is the honest answer. It must never
+      # be able to report a match it did not verify.
+      ANCHOR_MODE: local
+      ANCHOR_RPC_URL: ""
+
+  demo:
+    image: climateshield-demo:deploy-amd64
