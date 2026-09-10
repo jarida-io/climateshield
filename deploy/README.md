@@ -75,7 +75,23 @@ compose file:
   deterministic template; no language model runs and no credential is involved
   unless you deliberately set `BRIEFING_GENERATOR`.
 
-## 3. The short version
+## 3. The shortest version, from your laptop
+
+If you have `doctl` authenticated, one command creates the droplet and deploys
+to it:
+
+```bash
+doctl auth init                  # once; you paste your own token
+./scripts/create-droplet.sh      # creates a paid droplet, then deploys
+```
+
+Defaults are `s-2vcpu-4gb` in `fra1` on Ubuntu 24.04, deploying the ref you
+currently have checked out; override with `SIZE=`, `REGION=`, `REF=`. It
+refuses to create a droplet with no SSH key on it, reuses an existing droplet
+of the same name, and prints how to destroy it. Secrets are generated on the
+droplet and never leave it.
+
+## 4. The short version, on the host
 
 Everything from here — secrets, firewall, build, seed and verification — is in
 one idempotent script. Run it on the host and skip to section 6:
@@ -89,7 +105,7 @@ updates the deployment in place and keeps the secrets generated the first time.
 The sections below are what it does, for anyone who would rather do it by hand
 or needs to change one step.
 
-## 4. Generate secrets **on the host**
+## 5. Generate secrets **on the host**
 
 They are created here and never leave. Do not reuse a value you have typed
 anywhere else.
@@ -125,7 +141,7 @@ fails loudly instead of running with encryption that protects nothing.
 `openmeteo` for live forecasts — free, no API key, but the risk levels will
 then reflect real weather rather than the documented scenario.
 
-## 5. Deploy
+## 6. Deploy
 
 ```bash
 docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
@@ -134,7 +150,7 @@ docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml ps
 
 First build compiles eight Go binaries and the dashboard — several minutes.
 
-## 6. Seed the demo population and run the pipeline
+## 7. Seed the demo population and run the pipeline
 
 The overlay carries a one-shot `demo` service behind a profile, so the demo
 runs *inside* the compose network and resolves `postgres`, `registry` and
@@ -150,7 +166,7 @@ no port for Postgres or the registry, so a host-side run cannot reach them —
 and reopening those ports to seed a demonstration would undo the one security
 property this overlay exists to provide.
 
-## 7. Verify
+## 8. Verify
 
 This whole sequence was rehearsed on 2026-09-10 against the production overlay
 with real generated secrets — not the development placeholder — before it was
