@@ -1,0 +1,232 @@
+# SPDX-License-Identifier: Apache-2.0
+# One-command run: cp .env.example .env && docker compose up
+# imresamu/postgis is the multi-arch (amd64+arm64) build of the official
+# PostGIS images; the official postgis/postgis:16-3.4 ships amd64 only.
+services:
+  postgres:
+    image: imresamu/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-climateshield}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-climateshield}
+      POSTGRES_DB: ${POSTGRES_DB:-climateshield}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # -h 127.0.0.1 forces a TCP check. Without it pg_isready talks over the
+      # unix socket and succeeds against the temporary server initdb runs on a
+      # first boot, so compose starts the migration against a database that is
+      # not yet listening on the port the services use.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-climateshield} -d ${POSTGRES_DB:-climateshield}"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args: { CMD: migrate }
+    environment: &appenv
+      DATABASE_URL: postgres://${POSTGRES_USER:-climateshield}:${POSTGRES_PASSWORD:-climateshield}@postgres:5432/${POSTGRES_DB:-climateshield}?sslmode=disable
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      CLIMATE_FIXTURE_DIR: /testdata/golden
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  ingestor:
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args: { CMD: ingestor }
+    environment:
+      <<: *appenv
+      CLIMATE_SOURCE: ${CLIMATE_SOURCE:-openmeteo}
+      OPENMETEO_BASE_URL: ${OPENMETEO_BASE_URL:-https://api.open-meteo.com}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  predictor:
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args: { CMD: predictor }
+    environment: *appenv
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8091/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # A single-node EVM development chain, started by this stack, for the
+  # ledger's daily Merkle roots. It is NOT a public network: its chain id is
+  # 31337, its accounts are anvil's well-known unlocked development accounts
+  # (so no key is configured anywhere), and its history is deleted by
+  # `make down -v` along with the database. Every surface that mentions it
+  # says so. Pinned by digest; the same string is asserted by a test.
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:v1.5.1@sha256:3a70bfa9bd2c732a767bb60d12c8770b40e8f9b6cca28efc4b12b1be81c7f28e
+    # The image's entrypoint is `/bin/sh -c`, so the command must arrive as ONE
+    # argument: a bare string here would be split into words and the shell
+    # would run only the first of them.
+    command: ["exec anvil --host 0.0.0.0 --port 8545 --chain-id 31337 --state /data/anvil-state.json"]
+    volumes:
+      - anvildata:/data
+    ports:
+      # Bound to the loopback interface so the assessor can run `cast` against
+      # it from the host without exposing a chain on any other interface.
+      - "127.0.0.1:8545:8545"
+    healthcheck:
+      # The image ships cast and no curl or wget.
+      test: ["CMD-SHELL", "cast chain-id --rpc-url http://127.0.0.1:8545"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  ledger:
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args: { CMD: ledger }
+    environment:
+      <<: *appenv
+      ANCHOR_MODE: ${ANCHOR_MODE:-evm}
+      # The service name, not ${ANCHOR_RPC_URL}: .env's value is the HOST-side
+      # URL that `make demo` and the tests use, exactly as its DATABASE_URL
+      # points at localhost while this file points at the postgres service.
+      ANCHOR_RPC_URL: http://anvil:8545
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      anvil:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8093/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  notifier:
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args: { CMD: notifier }
+    environment:
+      <<: *appenv
+      NOTIFY_CHANNEL: ${NOTIFY_CHANNEL:-mock}
+      MOCK_OUTBOX_PATH: /outbox/outbox.jsonl
+      PII_KEY_HEX: ${PII_KEY_HEX:?set PII_KEY_HEX in .env (cp .env.example .env)}
+      # Local development runs on the published placeholder key and must say so
+      # explicitly. Left unset (as the production overlay's .env does) the
+      # service refuses to start on that key — fail closed, never silently.
+      PII_ALLOW_DEV_KEY: ${PII_ALLOW_DEV_KEY:-false}
+    volumes:
+      # The mock channel writes here as UID 10001 (deploy/go.Dockerfile runs
+      # every service unprivileged). A host directory created by root is
+      # mode 755 and NOT writable by that user, so on Linux every dispatch
+      # fails with "permission denied" — which is exactly what happened in
+      # production for four weeks while the queue filled with retries. Docker
+      # Desktop on macOS hides this: its bind mounts ignore the container UID.
+      # scripts/deploy-droplet.sh chowns this directory to 10001 before the
+      # first start; do the same by hand if you bring the stack up another way.
+      - ./var:/outbox
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8092/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # County risk briefings. The DEFAULT generator is a deterministic template
+  # that labels itself "[mock] no language model ran": this service reaches no
+  # model, no network and no credential unless a deployment opts in. The
+  # optional `ai` profile in deploy/docker-compose.ai.yml runs a small
+  # open-weights model beside it; `make up` never does.
+  briefing:
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args: { CMD: briefing }
+    environment:
+      <<: *appenv
+      BRIEFING_GENERATOR: ${BRIEFING_GENERATOR:-mock}
+      BRIEFING_SWEEP_INTERVAL: ${BRIEFING_SWEEP_INTERVAL:-15m}
+      NOTIFY_CHANNEL: ${NOTIFY_CHANNEL:-mock}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8094/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  registry:
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args: { CMD: registry }
+    environment: *appenv
+    ports:
+      - "8082:8082"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  publicapi:
+    build:
+      context: .
+      dockerfile: deploy/go.Dockerfile
+      args: { CMD: publicapi }
+    environment:
+      <<: *appenv
+      # Read-only: the public API re-reads roots from the chain to answer
+      # GET /v1/ledger/anchors/verify. It never writes to it.
+      ANCHOR_MODE: ${ANCHOR_MODE:-evm}
+      # The service name, not ${ANCHOR_RPC_URL}: .env's value is the HOST-side
+      # URL that `make demo` and the tests use, exactly as its DATABASE_URL
+      # points at localhost while this file points at the postgres service.
+      ANCHOR_RPC_URL: http://anvil:8545
+      PREDICTOR: ${PREDICTOR:-rules}
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  web:
+    build:
+      context: ./web
+    ports:
+      - "8081:80"
+    depends_on:
+      publicapi:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  anvildata:

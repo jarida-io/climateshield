@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a bug to help us improve ClimateShield AI
+about: Report a bug to help us improve ClimateShield
 title: '[BUG] '
 labels: bug
 assignees: ''
@@ -16,9 +16,11 @@ Steps to reproduce the behavior.
 What you expected to happen.
 
 **Environment**
-- OS:
-- Python version:
-- Component affected (climate-engine / ml-predictor / alert-engine / dashboard):
+- OS / architecture:
+- Go version (`go version`):
+- Docker version (`docker --version`):
+- Service affected (ingestor / predictor / registry / ledger / notifier / publicapi / web):
+- Climate source (`CLIMATE_SOURCE`: fixture or openmeteo):
 
 **Additional context**
 Any other context or screenshots.

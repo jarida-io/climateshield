@@ -1,0 +1,337 @@
+// SPDX-License-Identifier: Apache-2.0
+syntax = "proto3";
+
+package climateshield.v1;
+
+import "climateshield/v1/briefing.proto";
+import "climateshield/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/jarida-io/climateshield/internal/gen/climateshield/v1;climateshieldv1";
+
+// PublicService is the read-only public tier. Everything here is aggregate
+// (county x disease x date). It must never expose personal data, and counts
+// derived from people are k>=10 suppressed before they reach a response.
+service PublicService {
+  rpc GetCurrentRisk(GetCurrentRiskRequest) returns (GetCurrentRiskResponse) {}
+  rpc GetRiskHistory(GetRiskHistoryRequest) returns (GetRiskHistoryResponse) {}
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse) {}
+
+  // Evidence surfaces. Each one exists so a reviewer can check a claim
+  // against running data instead of taking it on trust.
+  rpc GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse) {}
+  rpc GetClimateSeries(GetClimateSeriesRequest) returns (GetClimateSeriesResponse) {}
+  rpc GetLedgerSummary(GetLedgerSummaryRequest) returns (GetLedgerSummaryResponse) {}
+  rpc GetAlertSummary(GetAlertSummaryRequest) returns (GetAlertSummaryResponse) {}
+  rpc GetPipelineStatus(GetPipelineStatusRequest) returns (GetPipelineStatusResponse) {}
+  rpc GetClimatology(GetClimatologyRequest) returns (GetClimatologyResponse) {}
+  // GetAnchorVerification checks one day's root against the chain LIVE:
+  // eth_call rootOf(day) on the RootAnchor contract, compared with the root
+  // in the database. It answers "unavailable" with a reason — never a
+  // fabricated match — when no chain is configured or reachable.
+  rpc GetAnchorVerification(GetAnchorVerificationRequest) returns (GetAnchorVerificationResponse) {}
+  // GetBriefing returns one county's plain-language risk briefing together
+  // with the exact fact sheet it was generated from (see briefing.proto).
+  rpc GetBriefing(GetBriefingRequest) returns (GetBriefingResponse) {}
+}
+
+// RiskScore is one county x disease risk assessment for one forecast window.
+message RiskScore {
+  string area = 1; // county name, e.g. "Kisumu"
+  double latitude = 2; // county centroid, for map rendering
+  double longitude = 3;
+  Disease disease = 4;
+  RiskLevel level = 5;
+  string forecast_date = 6; // RFC3339 date (Africa/Nairobi calendar date)
+  string driver = 7; // e.g. "peak_rainfall_mm_14d", "mean_max_temp_c_14d"
+  double driver_value = 8;
+  string predictor = 9; // predictor that produced this row, e.g. "rules"
+  string predictor_version = 10;
+  google.protobuf.Timestamp scored_at = 11;
+
+  // exceedance is how rare this driver value is for this county and month
+  // against the reference climatology: 0.02 means the most extreme 2% of the
+  // reference decade. It describes the WEATHER. It is NOT a probability that
+  // an outbreak will occur — this system holds no outbreak surveillance data
+  // and does not estimate that.
+  //
+  // Under the fixed-threshold predictor it is an ANNOTATION on this driver
+  // value and did not decide the level; the published cutoffs did. Under the
+  // climatology predictor it is what decided the level. See
+  // GetModelInfoResponse.exceedance_role for the wording of the live case.
+  // Absent when no reference distribution covers this county and month.
+  optional double exceedance = 12;
+
+  // explanation is a one-line reason a health officer can act on or dispute.
+  string explanation = 13;
+}
+
+message GetCurrentRiskRequest {}
+
+message GetCurrentRiskResponse {
+  repeated RiskScore scores = 1;
+  google.protobuf.Timestamp generated_at = 2;
+}
+
+message GetRiskHistoryRequest {
+  string area = 1; // optional county-name filter
+  Disease disease = 2; // optional; DISEASE_UNSPECIFIED = all
+  string from_date = 3; // optional RFC3339 date, inclusive
+  string to_date = 4; // optional RFC3339 date, inclusive
+  int32 limit = 5; // optional; server clamps
+}
+
+message GetRiskHistoryResponse {
+  repeated RiskScore scores = 1;
+  google.protobuf.Timestamp generated_at = 2;
+}
+
+// CountyStats carries people-derived aggregates. Any count in (0, 10) is
+// suppressed: the value is absent and the matching *_suppressed flag is true.
+// Zero and >=10 pass through unchanged.
+message CountyStats {
+  string area = 1;
+  optional int64 children_registered = 2;
+  bool children_registered_suppressed = 3;
+  optional int64 children_due = 4;
+  bool children_due_suppressed = 5;
+  optional int64 children_overdue = 6;
+  bool children_overdue_suppressed = 7;
+  optional int64 alerts_generated = 8;
+  bool alerts_generated_suppressed = 9;
+}
+
+message GetStatsRequest {}
+
+message GetStatsResponse {
+  repeated CountyStats stats = 1;
+  google.protobuf.Timestamp generated_at = 2;
+}
+
+// --- Evidence surfaces -------------------------------------------------
+// Everything below is aggregate or system metadata. No message here carries
+// a child or guardian identifier, name, phone, or per-child hash.
+
+message GetModelInfoRequest {}
+
+// ThresholdRule is one published proposal cutoff, reported so a reviewer can
+// compare what is claimed against what the reference climate record shows.
+message ThresholdRule {
+  string disease = 1;
+  string driver = 2;
+  double high = 3;
+  double medium = 4;
+  bool higher_is_worse = 5;
+  // reachable_in_reference_period is false when no county in the reference
+  // record ever came close to the HIGH cutoff, i.e. the rule cannot fire.
+  bool reachable_in_reference_period = 6;
+  string note = 7;
+}
+
+message GetModelInfoResponse {
+  string active_predictor = 1;
+  string active_version = 2;
+  repeated string available_predictors = 3;
+  repeated ThresholdRule rules = 4;
+
+  // Reference climatology metadata (empty when the rules predictor is active).
+  string reference_period = 5;
+  string reference_source = 6;
+  string reference_licence = 7;
+  int32 window_days = 8;
+  double high_exceedance = 9;
+  double medium_exceedance = 10;
+  // Plain-language statement of what the number does and does not mean.
+  string interpretation = 11;
+
+  // Provenance of the reference climatology artifact, so a reviewer can
+  // recompute it instead of trusting it. reference_generator is the command
+  // that builds the file; reference_sha256 is the SHA-256 of the exact bytes
+  // embedded in this binary.
+  string reference_file = 12;
+  string reference_sha256 = 13;
+  string reference_generator = 14;
+  // reference_windows is how many 14-day reference windows were measured in
+  // total, summed over every county and calendar month.
+  int64 reference_windows = 15;
+  // quantile_steps is how many percentile points each stored distribution has.
+  int32 quantile_steps = 16;
+
+  // exceedance_role states, in plain language, what the exceedance figure
+  // attached to a score does: whether it decided the tier or merely annotates
+  // a tier the published thresholds decided.
+  string exceedance_role = 17;
+}
+
+message GetClimateSeriesRequest {
+  string area = 1; // optional county-name filter
+}
+
+message ClimateDay {
+  string date = 1;
+  double precipitation_mm = 2;
+  double temp_max_c = 3;
+  double temp_min_c = 4;
+}
+
+message CountySeries {
+  string area = 1;
+  string source = 2; // "openmeteo" or "fixture" — never assumed, always read back
+  google.protobuf.Timestamp issued_at = 3;
+  repeated ClimateDay days = 4;
+}
+
+message GetClimateSeriesResponse {
+  repeated CountySeries series = 1;
+  google.protobuf.Timestamp generated_at = 2;
+}
+
+message GetLedgerSummaryRequest {}
+
+// DailyRoot is one day's Merkle root. The root is a commitment over that
+// day's leaves; it is not derived from any single child and publishing it
+// discloses nothing about one. Individual leaves are NEVER published.
+message DailyRoot {
+  string day = 1;
+  string root_hex = 2;
+  // leaf_count is suppressed below the k threshold: on a very quiet day it
+  // would say how many children were immunized.
+  optional int64 leaf_count = 3;
+  bool leaf_count_suppressed = 4;
+  string anchor_type = 5;
+  google.protobuf.Timestamp anchored_at = 6;
+
+  // Where the NEWEST anchor of this day was published. Only the newest is
+  // reported: how many anchor versions a day accumulated would track how
+  // many late immunizations were recorded, a people-derived count. The chain
+  // fields are zero/empty for a local (database-table) anchor.
+  int64 chain_id = 7;
+  string chain_label = 8; // e.g. "local development chain started by this stack — not a public network"
+  string contract_address = 9;
+  string tx_hash = 10;
+  int64 block_number = 11;
+  // readback_matches is true when the anchor read the root back from its
+  // destination right after publishing and it equalled the root published.
+  // Always false for local anchors: a database row is not an independent
+  // place to read from, and the row does not pretend otherwise.
+  bool readback_matches = 12;
+  google.protobuf.Timestamp verified_at = 13;
+  // anchor_reference is the anchor's own reference: the hex root for a local
+  // anchor, the transaction hash for a chain anchor.
+  string anchor_reference = 14;
+}
+
+message GetLedgerSummaryResponse {
+  repeated DailyRoot roots = 1;
+  int64 total_days = 2;
+  string algorithm = 3;
+  // anchor_note is computed from the newest anchor row: it names the chain,
+  // contract and what kind of chain it is when a root was written to one,
+  // and says plainly that no chain was written to when none was.
+  string anchor_note = 4;
+  google.protobuf.Timestamp generated_at = 5;
+  // anchor_mode is the configured ANCHOR_MODE ("local" or "evm").
+  string anchor_mode = 6;
+}
+
+message GetAnchorVerificationRequest {
+  string day = 1; // YYYY-MM-DD; empty means the newest day that has a root
+}
+
+// GetAnchorVerificationResponse is the result of a live check of one day's
+// root against the chain. Nothing in it derives from a person: both roots are
+// whole-day commitments.
+message GetAnchorVerificationResponse {
+  string day = 1;
+  // status is "verified" (chain root equals database root), "mismatch"
+  // (chain holds a different root) or "unavailable" (no chain anchor for
+  // this day, no RPC configured, or the chain did not answer). reason says
+  // why in plain language.
+  string status = 2;
+  string reason = 3;
+  string db_root_hex = 4;
+  string chain_root_hex = 5;
+  int64 chain_id = 6;
+  string chain_label = 7;
+  string contract_address = 8;
+  string tx_hash = 9;
+  google.protobuf.Timestamp checked_at = 10;
+  string anchor_mode = 11;
+  // day_bytes32 is the day as the contract takes it (ASCII, zero-padded), so
+  // the check can be repeated from any EVM tool.
+  string day_bytes32 = 12;
+}
+
+message GetAlertSummaryRequest {}
+
+message AlertStatusCount {
+  string status = 1;
+  optional int64 count = 2;
+  bool suppressed = 3;
+}
+
+// TemplateSample is a template rendered with PLACEHOLDER values so the
+// message shape can be reviewed without exposing a real recipient.
+message TemplateSample {
+  string lang = 1;
+  string body = 2;
+  int32 septets = 3;
+  int32 max_septets = 4;
+}
+
+message GetAlertSummaryResponse {
+  string channel = 1;
+  // channel_sends is false whenever the active channel delivers nothing.
+  bool channel_sends = 2;
+  string channel_note = 3;
+  repeated AlertStatusCount statuses = 4;
+  repeated TemplateSample templates = 5;
+  string quiet_hours = 6;
+  google.protobuf.Timestamp generated_at = 7;
+}
+
+message GetPipelineStatusRequest {}
+
+message JobKindStatus {
+  string kind = 1;
+  string state = 2;
+  int64 count = 3;
+  google.protobuf.Timestamp last_finished_at = 4;
+}
+
+message GetPipelineStatusResponse {
+  repeated JobKindStatus jobs = 1;
+  int64 climate_observations = 2;
+  int64 risk_scores = 3;
+  google.protobuf.Timestamp latest_observation_at = 4;
+  string ingest_interval = 5;
+  google.protobuf.Timestamp generated_at = 6;
+}
+
+message GetClimatologyRequest {
+  string area = 1;  // county name
+  int32 month = 2;  // 1-12
+}
+
+// ClimatologyDistribution is the empirical distribution of one driver for one
+// county-month, as measured over the reference period. It describes weather,
+// not people.
+message ClimatologyDistribution {
+  string driver = 1;
+  string unit = 2;
+  // quantiles at the percentile steps reported alongside, ascending.
+  repeated double quantiles = 3;
+  repeated int32 percentile_steps = 4;
+  bool lower_tail_is_hazard = 5;
+  // observed is the current forecast window's value, when one exists.
+  optional double observed = 6;
+  optional double observed_exceedance = 7;
+}
+
+message GetClimatologyResponse {
+  string area = 1;
+  int32 month = 2;
+  int32 samples = 3;
+  string reference_period = 4;
+  repeated ClimatologyDistribution distributions = 5;
+}

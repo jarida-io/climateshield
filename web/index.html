@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>ClimateShield</title>
+    <meta
+      name="description"
+      content="Climate-responsive early warning for child immunization in Kenya: county climate data, published risk thresholds, guardian alerts and a tamper-evident immunization record."
+    />
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        /* Faces are bundled by @fontsource (SIL OFL) and served from this
+           origin — the dashboard makes no third-party requests, so a public
+           visitor is never disclosed to a font CDN. */
+        font-family: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+        /* Every figure on this dashboard is meant to be compared with the one
+           below it: county against county, day against day, root against root.
+           Proportional digits make those columns ragged and the comparison
+           slower, so figures are tabular everywhere by default. */
+        font-variant-numeric: tabular-nums;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      /* The one element that is a logotype rather than text. */
+      .wordmark {
+        font-family: Comfortaa, "IBM Plex Sans Variable", system-ui, sans-serif;
+      }
+      /* Prose is read, not compared: proportional figures set better in a
+         sentence. Applies to the running text inside a page's body copy. */
+      .prose {
+        font-variant-numeric: normal;
+      }
+      :focus-visible {
+        outline: 2px solid #0E3733;
+        outline-offset: 2px;
+        border-radius: 2px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
