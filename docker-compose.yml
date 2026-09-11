@@ -133,6 +133,14 @@ services:
       # service refuses to start on that key — fail closed, never silently.
       PII_ALLOW_DEV_KEY: ${PII_ALLOW_DEV_KEY:-false}
     volumes:
+      # The mock channel writes here as UID 10001 (deploy/go.Dockerfile runs
+      # every service unprivileged). A host directory created by root is
+      # mode 755 and NOT writable by that user, so on Linux every dispatch
+      # fails with "permission denied" — which is exactly what happened in
+      # production for four weeks while the queue filled with retries. Docker
+      # Desktop on macOS hides this: its bind mounts ignore the container UID.
+      # scripts/deploy-droplet.sh chowns this directory to 10001 before the
+      # first start; do the same by hand if you bring the stack up another way.
       - ./var:/outbox
     depends_on:
       migrate:

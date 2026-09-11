@@ -96,18 +96,31 @@ EOF
   echo "    wrote .env (0600). The secrets were not printed."
 fi
 
-# --- 4. Build and start -----------------------------------------------------
+# --- 4. The outbox directory ------------------------------------------------
+# The notifier runs as UID 10001 and the mock channel appends to /outbox, a
+# bind mount of ./var. Created by root it is mode 755 and unwritable by that
+# user, so every alert dispatch fails with "permission denied" and the queue
+# fills with retries while the alerts table stays empty. This is a Linux-only
+# failure: Docker Desktop's bind mounts on macOS ignore the container UID, so
+# it does not reproduce in local development.
+say "Making the outbox writable by the unprivileged service user"
+mkdir -p var
+chown 10001:10001 var
+chmod 775 var
+stat -c '    var is uid=%u gid=%g mode=%a' var
+
+# --- 5. Build and start -----------------------------------------------------
 say "Building and starting (first run compiles eight Go binaries and the dashboard)"
 $C up -d --build --wait
 $C ps
 
-# --- 5. Seed the demonstration ----------------------------------------------
+# --- 6. Seed the demonstration ----------------------------------------------
 # Runs inside the compose network, so it reaches postgres, registry and
 # publicapi by service name without reopening a single port.
 say "Seeding the fictional demo population and running the pipeline"
 $C --profile demo run --rm demo || echo "    demo exited non-zero; the stack is still up — check 'logs demo'"
 
-# --- 6. Verify --------------------------------------------------------------
+# --- 7. Verify --------------------------------------------------------------
 say "Verifying from the host"
 echo "--- /health"
 curl -fsS localhost/health || echo "    health check failed"
