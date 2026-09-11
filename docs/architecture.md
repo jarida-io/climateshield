@@ -16,8 +16,8 @@ substantiated.
 ## Services
 
 Seven long-running services plus three one-shot commands, all from one Go
-module. Each service's `cmd/*/main.go` is about fifteen lines and delegates to
-`Run` in its package.
+module. Each service's `cmd/*/main.go` does configuration and signal handling
+only and delegates to `Run` in its package.
 
 ```mermaid
 flowchart LR
@@ -126,7 +126,7 @@ flowchart TB
 Two properties are worth stating plainly because they are easy to overclaim:
 
 - The chain in `docker-compose.yml` is a **local development chain started by
-  this stack**. Its history does not outlive `make down -v`. Nothing here is
+  this stack**. Its history does not outlive `make down`. Nothing here is
   written to any public network, and no surface in this repository calls it
   public, immutable or decentralised.
 - **Erasure still works.** `ForgetChild` deletes the records, scrubs the leaf

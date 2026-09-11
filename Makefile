@@ -64,10 +64,10 @@ contract:
 	./scripts/build-contract.sh
 
 ## climatology: rebuild the reference climatology from the Open-Meteo archive
-## (developer only; free and keyless, but the ONLY outbound request this repo
-## makes). Prints the SHA-256 of what it wrote — compare it with
-## reference_sha256 on GET /v1/model. Nothing in `make up`, `make demo`, the
-## tests or CI runs this.
+## (developer only; free and keyless, and the only read of that archive this
+## repo makes — no test makes it). Prints the SHA-256 of what it wrote —
+## compare it with reference_sha256 on GET /v1/model. Nothing in `make up`,
+## `make demo`, the tests or CI runs this.
 climatology:
 	go run ./cmd/buildclimatology
 

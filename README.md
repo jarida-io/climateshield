@@ -5,10 +5,12 @@
 **Climate-responsive early warning for child immunization in Kenya.**
 
 Climate data comes in. Outbreak risk is scored per county against the published
-thresholds. Guardians of under-vaccinated children are selected for alerting. A
+thresholds. Guardians of under-vaccinated children are selected for alerting on
+a mock channel that records what it would send and sends nothing. A
 plain-language county briefing is written from the aggregates, in English and
 Kiswahili. Immunization events are committed to a tamper-evident ledger whose
-daily root is anchored to a chain and read back. County-level aggregates are
+daily root is anchored to the local development chain this stack starts, and
+read back before the day is reported as anchored. County-level aggregates are
 published on a free, unauthenticated, read-only API — and a dashboard lets
 anyone check each of those claims against live data rather than taking them on
 trust.
@@ -18,28 +20,60 @@ Innovation Fund. Licensed under [Apache 2.0](LICENSE).
 
 ---
 
+## See it running
+
+<https://climateshield.jarida.io> serves `main` from DigitalOcean's smallest
+tier, behind Caddy with automatic TLS. The risk map, the Model view, the county
+briefings, the k-anonymity table on **Overview** and every endpoint under `/v1/`
+are all live there.
+
+Three things that host deliberately does **not** run. It has 458 MB of RAM, so
+it runs [the smallhost overlay](deploy/docker-compose.smallhost.yml), which
+cannot fit the chain:
+
+- **No development chain**, so the ledger runs `ANCHOR_MODE=local` and each
+  day's root is recorded in that deployment's own `anchors` table and nowhere
+  else. `GET /v1/ledger/anchors/verify` answers `unavailable` there and gives
+  its reason. That is the correct answer rather than a fault — and it means
+  **the chain anchor is not demonstrated on the public host**.
+- **No language model.** `BRIEFING_GENERATOR=mock`, so briefings come from the
+  deterministic template that labels itself on its first line.
+- **No SMS**, as everywhere else in this system.
+
+The chain anchor is demonstrated by `make up` below, which starts the full
+stack including `anvil`. [deploy/README.md](deploy/README.md) explains both
+overlays and which one to use.
+
+---
+
 ## What the proposal promised, and what runs today
 
-Every "See it yourself" below is a command, an endpoint or a test name that
-exists in this repository and was run against the running stack while this
-README was written.
+Read in this order: this page for what exists; [NOTES.md](NOTES.md) for a
+deliberately unflattering account of what is stubbed and what is thin;
+[docs/roadmap.md](docs/roadmap.md) for what each pillar needs next and which of
+those needs are somebody else's to supply; then
+[docs/model-card.md](docs/model-card.md) and
+[docs/threshold-validation.md](docs/threshold-validation.md), which answer the
+two questions an assessor actually asks — is it a model, and are the thresholds
+any good.
+
+Every "See it yourself" below is a command, an endpoint or a dashboard view that
+exists in this repository, and each was run against the running stack on
+2026-09-11. They assume `make up && make demo` have run once: before that there
+is no data for the ledger and anchor checks to report on, and an empty answer
+from them is not a failure.
 
 | Pillar | What runs today | Status | See it yourself |
 |---|---|---|---|
-| **Prediction model** | Four published threshold rules decide every risk level. A fitted climatology — 3,780 empirical quantiles over 18,195 fourteen-day windows of ERA5 reanalysis — annotates every stored score with how unusual that weather was, and can be promoted to the deciding scorer with `PREDICTOR=climatology`. | Runs. Not validated against any disease outcome, because this repository holds no outbreak data. | Dashboard → **Model**; `curl -s localhost:8080/v1/model \| jq '{activePredictor, referenceSha256, exceedanceRole}'` |
+| **Prediction model** | Four published threshold rules decide every risk level. A fitted climatology — 3,780 empirical quantiles over 18,195 fourteen-day windows of ERA5 reanalysis — annotates every stored score with how unusual that weather was, and can be promoted to the deciding scorer with `PREDICTOR=climatology`. | Runs. Not validated against any disease outcome, because this repository holds no outbreak data. | Dashboard → **Model**; `GET /v1/model` (`activePredictor`, `referenceSha256`, `exceedanceRole`) |
 | **Threshold validation** | Two of the four published cutoffs (pneumonia, meningitis) cannot fire in the five monitored counties. Reported, not amended — they are contractual. | Runs, and is the most useful result here. | `go test ./internal/predict -run TestPublishedTemperatureThresholdsAreUnreachableInReferenceDecade` |
-| **Generative AI — county briefings** | A briefing service writes one briefing per county per language from an aggregate fact sheet. The **default generator is a deterministic template that says so on its first line**. A language model is opt-in (`make up-ai`, or the Claude API with a key this repo never ships). Every model draft is checked against the fact sheet and a failing draft is rejected, never served. | Runs by default with no model. The model paths are tested against committed response shapes, **never against a live model on this machine**. | Dashboard → **Briefing**; `curl -s "localhost:8080/v1/briefings?area=Kisumu&lang=en" \| jq .` |
-| **Blockchain — chain anchor** | Each day's Merkle root is written to a `RootAnchor` contract on the development chain this stack starts, and read back with `eth_call` before the day is reported as anchored. A read-back mismatch is an error. | Runs. **A local development chain, not a public network**; its history is deleted by `make down -v`. | Dashboard → **History**; `curl -s localhost:8080/v1/ledger/anchors/verify \| jq .` |
+| **Generative AI — county briefings** | A briefing service writes one briefing per county per language from an aggregate fact sheet. The **default generator is a deterministic template that says so on its first line**. A language model is opt-in (`make up-ai`, or the Claude API with a key this repo never ships). Every model draft is checked against the fact sheet and a failing draft is rejected, never served. | Runs by default with no model. A local open-weights model was run once, on 2026-09-10: **all six drafts it produced were refused by the grounding check** and the labelled template was served instead. No live Anthropic call has ever been made. | Dashboard → **Briefing**; `GET /v1/briefings?area=Kisumu&lang=en` |
+| **Blockchain — chain anchor** | Each day's Merkle root is written to a `RootAnchor` contract on the development chain this stack starts, and read back with `eth_call` before the day is reported as anchored. A read-back mismatch is an error. | Runs under `make up`. **A local development chain, not a public network**; its history is deleted by `make down`. Not running on the public host — see "See it running" above. | Dashboard → **History**; `GET /v1/ledger/anchors/verify` |
 | **Tamper-evident immunization record** | Per-child HMAC-SHA256 leaves, RFC 6962 Merkle trees, inclusion proofs, append-only events enforced by a database trigger, and a guarded right-to-erasure path. | Runs. `ForgetChild` is a tested library function with no endpoint calling it. | `make demo` prints an inclusion proof for an event it recorded moments earlier |
 | **Guardian messaging** | Bilingual GSM-7 templates, consent gate, quiet hours, per-child dedup, and a Channel port. The default channel **records what it would send and sends nothing**. | Runs to the channel boundary. No SMS has ever been sent by this system. | Dashboard → **Messaging**; `var/outbox.jsonl` after `make demo` |
-| **No personal data on a public surface** | Aggregates only, with k≥10 suppression on every count derived from people. Ledger leaves are per-child HMACs and are never published; only whole-day roots are. | Enforced by two contract tests CI runs by name. | `go test ./internal/publicapi -run 'TestContract_PIILeak\|TestContract_KAnonymity' -v` |
+| **No personal data on a public surface** | Aggregates only, with k≥10 suppression on every count derived from people. Ledger leaves are per-child HMACs and are never published; only whole-day roots are. | Enforced by two contract tests CI runs by name. | `go test ./internal/publicapi -run 'TestContract_' -v` |
 | **Zero credentials, one command** | `cp .env.example .env && make up && make demo` on a clean machine, offline once the images are pulled. No key, token or account anywhere. | Runs. | The Quick start below |
 | **Coverage gate ≥80%** | 90.6% of statements over `./internal/...`, excluding generated code. | Green. | `go run ./scripts/covergate -profile coverage.out -threshold 80` |
-
-[NOTES.md](NOTES.md) is a deliberately unflattering account of what is
-implemented, what is stubbed and what is thin. [docs/roadmap.md](docs/roadmap.md)
-says what each pillar needs next and which of those needs are dependencies on
-someone else. Read both before forming a view.
 
 ---
 
@@ -53,10 +87,10 @@ make demo
 
 `make up` starts **eleven containers** — ten long-running (Postgres, the seven
 Go services, `anvil` the local development chain, and the dashboard) plus a
-one-shot migration that exits 0 — and waits for every health check. The
-**first** run compiles eight Go binaries and the dashboard, which takes several
-minutes on a cold Docker cache; afterwards it reaches healthy in about a
-minute.
+one-shot migration that exits 0 — and waits for every health check the compose
+file declares. The **first** run compiles eight Go binaries and the dashboard,
+which takes several minutes on a cold Docker cache; afterwards it comes up in
+about a minute.
 
 | Surface | URL |
 |---|---|
@@ -69,22 +103,24 @@ development chain's history**.
 
 ### What `make demo` prints
 
-Copied verbatim from a real run against the stack described above. The demo
-ingests a committed fixture scenario — a Kisumu long-rains window — so its
-output is identical on every machine.
+Pasted unedited from a run on 2026-09-11 against the stack above. That stack
+already had the demo population, so the first line says it reused one; a first
+run seeds it instead. The demo ingests a committed fixture scenario — a Kisumu
+long-rains window — so the weather, the driver values and the risk levels are
+the same on every machine. The dates, roots, transaction hashes, event ids,
+leaf counts and alert counts are not: they come from the run.
 
 ```
 ============================================================
 ClimateShield — walking skeleton demo
 requesting ingest from: fixture (committed demo scenario, not live weather)
 ============================================================
-seeded fictional population: 15 guardians (1 opted out), 28 children, 272 immunization events
+demo population already present (28 children) — reusing
 enqueued climate_ingest -> risk_predict -> alert_dispatch
-recorded immunization event a31dcda0-ca6a-4478-8f71-97ff04970595 (opv3) via registry API
-NOTE: quiet hours (21:00-07:00 EAT) — alert dispatch is deferred to 07:00 EAT;
-      alert counts below will be zero, honestly.
+recorded immunization event c3dd32b0-11d2-4b2d-b981-d68b34e831ea (opv3) via registry API
 waiting for risk scores for all 5 counties ... done
-waiting for ledger sweep of the recorded event. ... done
+waiting for alert dispatch ... done
+waiting for ledger sweep of the recorded event ... done
 
 --- Outbreak risk (latest per county x disease) ---
 scored from observations ingested via: fixture (committed demo scenario, not live weather) [5 counties]
@@ -125,26 +161,28 @@ only the active predictor above wrote scores or triggered alerts; the other colu
 was computed by this demo for comparison and sent nothing.
 
 --- Alerts ---
-[mock] would send 0 alerts
+  skipped_consent      4
+  would_send           35
+[mock] would send 35 alerts
 (mock channel active: NO SMS was sent; see var/outbox.jsonl for the rendered messages)
 
 --- Tamper-evident ledger ---
-  2026-09-09: 273 leaves, root 0560fd76f0d1ef59…
+  2026-09-11: 277 leaves, root 1c5ff58a20a0cf33…
     anchored: chain id 31337 (local development chain started by this stack — not a public network)
               contract 0x5fbdb2315678afecb367f032d93f642f64180aa3
-              tx 0x5faf417978e6c4bd444716d2b0a73218c751ff265fa5f42bff67b02f0a40685a in block 2
+              tx 0x2b489515620d837786907dc7e76f58221d5cefb9cd65c5e3a88289c7c10ebfdf in block 6
               read-back rootOf(day) == database root: OK
     check it yourself, without trusting this program:
-      docker compose exec anvil cast call 0x5fbdb2315678afecb367f032d93f642f64180aa3 "rootOf(bytes32)(bytes32)" 0x323032362d30392d303900000000000000000000000000000000000000000000 --rpc-url http://127.0.0.1:8545
-  inclusion proof for event a31dcda0…: OK (leaf 192 of 273 under root 0560fd76f0d1ef59…)
+      docker compose exec anvil cast call 0x5fbdb2315678afecb367f032d93f642f64180aa3 "rootOf(bytes32)(bytes32)" 0x323032362d30392d313100000000000000000000000000000000000000000000 --rpc-url http://127.0.0.1:8545
+  inclusion proof for event c3dd32b0…: OK (leaf 210 of 277 under root 1c5ff58a20a0cf33…)
 
 --- Public API ---
-  GET http://localhost:8080/v1/risk/current -> 200 (5681 bytes JSON)
+  GET http://localhost:8080/v1/risk/current -> 200 (11361 bytes JSON)
   dashboard: http://localhost:8081
 
 --- County briefing ---
-waiting for the briefing service to write Kisumu's briefing. ... done
-  Generated by a deterministic template — no language model ran. Template template-v1, facts b9c80c69025a.
+waiting for the briefing service to write Kisumu's briefing ... done
+  Generated by a deterministic template — no language model ran. Template template-v1, facts 65061fce6e15.
   | [mock] no language model ran — deterministic template.
   | 
   | Kisumu, forecast window 2026-08-07 to 2026-08-20 (14 days, source: fixture).
@@ -159,21 +197,13 @@ waiting for the briefing service to write Kisumu's briefing. ... done
   | These risk levels describe weather measured against the published thresholds. They do not forecast an outbreak, and this system holds no outbreak surveillance data.
   | 
   | Scored by rules v1.0.0.
-  facts behind it: 4 scored diseases, window 2026-08-07 to 2026-08-20 (source fixture), facts b9c80c69025a…
+  facts behind it: 4 scored diseases, window 2026-08-07 to 2026-08-20 (source fixture), facts 65061fce6e15…
   read it yourself, in English or Kiswahili:
     curl -s "http://localhost:8080/v1/briefings?area=Kisumu&lang=sw" | jq .
 
 demo complete.
 ============================================================
 ```
-
-Two things about that run are worth knowing before a live demonstration.
-
-**`[mock] would send 0 alerts` is quiet hours, not a broken alert path.** This
-capture was taken between 21:00 and 07:00 East Africa Time, when dispatch is
-deferred to 07:00 — the demo prints a NOTE saying exactly that before the risk
-grid. Run it outside those hours and the same fixture produces a fan-out of
-alerts, still as `would_send`, still transmitted nowhere.
 
 **The demo reports the source it *actually* scored from**, read back from the
 database rather than assumed from its own configuration, so it cannot claim
@@ -246,10 +276,11 @@ the fact and moves nothing: the published thresholds still set every tier and
 trigger every alert. `GET /v1/model` carries the sentence describing which case
 the live deployment is in, so a reader never has to infer it.
 
-Where the annotation surfaces: on the Model view, in the fact sheet returned by
-`GET /v1/briefings`, and in the "same weather, both scorers" block `make demo`
-prints. The risk endpoints themselves report the level, driver and driver value
-that the published thresholds acted on, and nothing more.
+Where the annotation surfaces: on the Model view, on `GET /v1/risk/current` and
+`GET /v1/risk/history` as `exceedance` plus an `explanation` sentence, in the
+fact sheet returned by `GET /v1/briefings`, and in the "same weather, both
+scorers" block `make demo` prints. The CSV and GeoJSON exports carry the level,
+driver and driver value only.
 
 Every `risk_scores` row records the predictor name and version that produced
 it, so scores stay auditable across scorer changes.
@@ -267,11 +298,11 @@ artifact's digest is `acc41f68…c41c8d`, published on `GET /v1/model` as
 `reference_sha256` and recorded in the model card and the threshold-validation
 document.
 
-> **Unproven:** `make climatology` has not been run in this branch, so
-> byte-identical regeneration from the archive has not been demonstrated
-> end to end. What *is* proven without a network: the generator re-emits the
-> committed artifact byte for byte, and its windowing reproduces the committed
-> per-county-per-month sample counts exactly.
+> **Unproven:** nobody has run `make climatology` in this repository, so
+> byte-identical regeneration from the archive has not been demonstrated end to
+> end. [docs/model-card.md](docs/model-card.md) records what *is* proven without
+> a network, and [NOTES.md](NOTES.md) records why the quantile index rule had to
+> be inferred rather than recovered.
 
 **Verify it yourself.**
 
@@ -307,7 +338,7 @@ The chain is `anvil`, started by this repository's own `docker compose`, chain
 id 31337. Every surface derives that label from `eth_chainId` at runtime rather
 than hard-coding a claim, which is why the demo, the API and the dashboard all
 say *"local development chain started by this stack — not a public network"*
-and that its history does not outlive `make down -v`.
+and that its history does not outlive `make down`.
 
 `GET /v1/ledger/anchors/verify` performs a live `rootOf(day)` call and returns
 `verified`, `mismatch` or `unavailable` with a plain-language reason. A check
@@ -379,11 +410,22 @@ silently serving templates while claiming a model.
   job on the briefing service's own sweep; a county whose fact-sheet hash has
   not changed regenerates nothing.
 
-> **Unproven, and stated as such:** `make up-ai` has never been run on this
-> machine, and no live Anthropic API call has ever been made from this
-> repository. Both model adapters are verified against committed golden
-> response shapes served by `httptest`, never against a network host. Nobody
-> here has watched a language model write one of these briefings.
+> **What a real model actually did here.** `make up-ai` was run once, on
+> 2026-09-10, against qwen2.5:1.5b served locally by Ollama. **All six drafts it
+> produced were refused by the grounding check** — `forbidden_claim` (it wrote
+> "will occur", an outbreak prediction this system cannot support),
+> `possible_name`, and on the Kiswahili drafts `level_mismatch`. The labelled
+> template was served in each case and the provenance line named the model that
+> had failed. So the refusal path has now fired against a live model rather than
+> only against the adversarial fixtures in the test suite — and **no
+> model-written briefing has ever been served by this system.** Whether a larger
+> model clears the check is untested; no pass rate exists to quote.
+> [NOTES.md](NOTES.md#what-happened-when-a-real-model-was-actually-run) records
+> the run in full.
+>
+> **Still unproven:** no live Anthropic API call has ever been made from this
+> repository. That adapter is verified only against committed golden response
+> shapes served by `httptest`.
 >
 > The **Kiswahili wording is not reviewed by a Kiswahili speaker.** It was
 > hand-written by the implementer. The grounding check catches invented facts;
@@ -403,46 +445,35 @@ go test ./internal/briefing/facts -run TestFactSheetHasNoPersonFields -v
 
 ## The honesty commitments
 
-Four things this project refuses to do, each checkable in the code.
+Four refusals and two commitments. Each links to the section that demonstrates
+it, and the full argument for each lives in [NOTES.md](NOTES.md).
 
-**1. No SMS is sent.** The default messaging channel is a mock that records
-what it *would* send and says so. Alerts are recorded as `would_send`, never
-`sent`; output says `[mock] would send N alerts`. Only a real carrier adapter
-may write `sent`, and none has ever been connected.
+1. **No SMS is sent.** Alerts are recorded as `would_send`, never `sent`; only a
+   real carrier adapter may write `sent` and none has ever been connected — see
+   [Operational notes](#operational-notes).
+2. **No accuracy claim.** No sensitivity, specificity, accuracy, latency, uptime
+   or "families protected" figure appears anywhere in this repository, because no
+   evaluation exists that would support one — see
+   [The prediction model](#the-prediction-model).
+3. **The chain is a local development chain, and every surface says which.**
+   Nothing here is written to any public network, and no surface calls this
+   chain public, immutable or decentralised — see
+   [The chain anchor](#the-chain-anchor).
+4. **Generated text is labelled, grounded, or not served.** A draft that fails
+   the grounding check is rejected and the labelled template is served in its
+   place with the reasons why — see [County briefings](#county-briefings).
 
-**2. No accuracy claim.** There is no outbreak surveillance data here, so no
-scorer has been validated against disease outcomes and none reports a
-sensitivity, specificity or accuracy figure anywhere. There is no latency,
-uptime or "families protected" number in this repository either, and there
-should not be one until an evaluation exists.
+And two it does make:
 
-**3. The chain is a local development chain, and the README says which.** What
-*does* happen: `make up` starts `anvil` (chain id 31337) as part of this stack;
-each day's Merkle root is written to a `RootAnchor` contract on it and read back
-with `eth_call` before the day is reported as anchored; `make down -v` deletes
-that chain's history along with the database. What does **not** happen: nothing
-here is written to any public network, and no surface in this repository calls
-this chain public, immutable or decentralised. Anchoring to a public network is
-**deliberately not wired**, because it would need a funded signing key and this
-project's zero-credential rule forbids one.
-
-**4. Generated text is labelled, grounded, or not served.** The default
-briefing generator is a deterministic template whose first line says a language
-model did not run. A model is opt-in. Every briefing carries its generator,
-model and prompt version alongside the hash of the fact sheet it was written
-from, and a draft that fails the grounding check is rejected — the labelled
-template is served in its place with the reasons why. Serving model-labelled
-text that no model produced would be the "SMS sent" lie in a new costume.
-
-And two commitments it does make:
-
-- **No personal data reaches any public surface.** Aggregates only, with k≥10
-  suppression on every count derived from people. Enforced by
-  `TestContract_PIILeak` and `TestContract_KAnonymity`, which CI runs **by
-  name** and greps for their `RUN` and `PASS` lines — because `go test -run`
-  exits 0 when a test has been deleted.
+- **No personal data reaches any public surface.** Aggregates only, k≥10
+  suppressed — see [Privacy](#privacy).
 - **No credentials required.** `git clone && cp .env.example .env && make up`
   works on a clean machine.
+
+Serving model-labelled text that no model produced, or printing "SMS sent" while
+sending nothing, would be the same lie in two costumes. The prototype this
+replaced printed the second one; see
+[Corrected from the prototype](NOTES.md#corrected-from-the-prototype).
 
 ---
 
@@ -594,8 +625,14 @@ monitoring sees the truth while readers keep getting data.
 ```bash
 docker compose stop postgres
 curl -si localhost:8080/v1/risk/current | grep -i x-data-stale   # X-Data-Stale: true
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/health   # 503
 docker compose start postgres
 ```
+
+Run on 2026-09-11 against the local stack: the risk endpoint returned `200` with
+`X-Data-Stale: true` and a complete last-good body, `/health` returned `503`, and
+restarting Postgres restored `200` with no stale header. What has *not* been
+watched is the dashboard rendering its banner during that outage.
 
 ### Privacy
 
@@ -607,7 +644,14 @@ docker compose start postgres
   demo population shows both cases at once.
 
 Both properties are enforced by `TestContract_PIILeak` and
-`TestContract_KAnonymity`, which CI runs by name.
+`TestContract_KAnonymity`. CI runs them **by name** and greps for their `RUN`
+and `PASS` lines, because `go test -run` exits 0 when the test it was asked for
+has been deleted — a green build that ran nothing is the failure mode worth
+guarding against.
+
+```bash
+go test ./internal/publicapi -run 'TestContract_' -v
+```
 
 ---
 
@@ -650,9 +694,10 @@ The gate requires **≥80%** statement coverage over `./internal/...`, enforced 
 (`internal/gen`, `internal/store/db`) is excluded; nothing else is. The
 exclusions are policy, recorded in [CLAUDE.md](CLAUDE.md).
 
-> **Current: 90.6% (2819/3113 statements) — the gate is green.** It was red at
-> 66.8% one branch ago; the fix was to write the tests, not to move the
-> threshold. Per-package figures are in [NOTES.md](NOTES.md).
+> **Current: 90.6%, against a gate of 80% — green.** It was red at 66.8% before
+> this work; the fix was to write the tests, not to move the threshold. Run the
+> command below for the exact statement counts, which move with every commit.
+> Per-package figures are in [NOTES.md](NOTES.md).
 
 ```bash
 make test && go run ./scripts/covergate -profile coverage.out -threshold 80
@@ -698,7 +743,7 @@ the service's own config struct, so leaving them unset is the documented case.
 | `PII_KEY_HEX` | 64-char dev value | AES-256-GCM key for encrypted columns. **Generate per deployment:** `openssl rand -hex 32` |
 | `PII_ALLOW_DEV_KEY` | `true` in `.env.example`; `false` in compose if unset | Services refuse to start on the published placeholder key unless this is `true`. The production overlay never sets it |
 | `PREDICTOR` | `rules` | `rules` or `climatology` |
-| `CLIMATE_SOURCE` | `fixture` | `fixture` (deterministic, offline) or `openmeteo` (live) |
+| `CLIMATE_SOURCE` | `fixture` in `.env.example`; `openmeteo` in code and in compose if unset | `fixture` (deterministic, offline) or `openmeteo` (live). An ingestor started without `.env` fetches live forecasts |
 | `OPENMETEO_BASE_URL` | `https://api.open-meteo.com` | Forecast API origin (no key) |
 | `CLIMATE_FIXTURE_DIR` | `testdata/golden` | Where the fixture source reads from |
 | `FORECAST_DAYS` | `14` | Forecast window length |
@@ -717,6 +762,7 @@ the service's own config struct, so leaving them unset is the documented case.
 | `BRIEFING_SWEEP_INTERVAL` | `15m` | How often a county's fact sheet is re-checked; unchanged facts regenerate nothing |
 | `BRIEFING_TIMEOUT` | `120s` | Bound on one generation, which never happens on a request path |
 | `BRIEFING_OPENAI_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible endpoint for a local model |
+| `BRIEFING_OPENAI_API_KEY` | *(empty)* | A placeholder some OpenAI-compatible servers expect and a local one ignores. Not a credential |
 | `ANTHROPIC_API_KEY` | *(empty)* | Not a credential this project has, needs or ships |
 | `ONNX_MODEL_PATH` | *(empty)* | Not implemented; a non-empty value **fails startup** rather than silently falling back |
 | `PUBLICAPI_ADDR` | `:8080` | Public API listen address |
@@ -731,6 +777,14 @@ the service's own config struct, so leaving them unset is the documented case.
 **Messaging honesty.** With `NOTIFY_CHANNEL=mock` nothing is sent anywhere.
 Alerts are recorded as `would_send`, never `sent`. Output says
 `[mock] would send N alerts`.
+
+**The outbox directory must be writable by UID 10001.** On Linux, `./var` — the
+host side of the `/outbox` bind mount — is root-owned mode 755 when created by
+root, and the services run unprivileged, so every dispatch fails with
+`permission denied` and the `alerts` table stays empty. Docker Desktop on macOS
+hides this. `scripts/deploy-droplet.sh` chowns it; a hand-rolled deployment must
+too. This shipped once and went unnoticed for four weeks — see
+[NOTES.md](NOTES.md#three-real-bugs-and-where-each-was-caught).
 
 **Quiet hours.** No alert is dispatched between 21:00 and 07:00 East Africa
 Time (fixed UTC+3; Kenya observes no DST). Jobs landing in the window are

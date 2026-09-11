@@ -80,7 +80,7 @@ func TestLedgerSummaryNamesTheChainOnlyWhenARootReachedIt(t *testing.T) {
 	require.Contains(t, msg.GetAnchorNote(), "RootAnchor contract at "+contract)
 	require.Contains(t, msg.GetAnchorNote(), "chain id 31337")
 	require.Contains(t, msg.GetAnchorNote(), evm.DevChainLabel)
-	require.Contains(t, msg.GetAnchorNote(), "does not outlive `make down -v`")
+	require.Contains(t, msg.GetAnchorNote(), "does not outlive `make down`")
 	require.NotContains(t, strings.ToLower(msg.GetAnchorNote()), "immutable")
 	require.NotContains(t, strings.ToLower(msg.GetAnchorNote()), "decentralis")
 

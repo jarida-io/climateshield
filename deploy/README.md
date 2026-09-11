@@ -12,14 +12,28 @@ a chat window, an issue, or a commit.
 
 ---
 
+## 0. Which overlay you want
+
+Two, and the choice costs you a pillar:
+
+| Overlay | For | What it gives up |
+|---|---|---|
+| `deploy/docker-compose.prod.yml` | A host with **4 GB RAM** that builds its own images | Nothing. The chain anchor runs and `/v1/ledger/anchors/verify` reports `verified`. |
+| …plus `deploy/docker-compose.smallhost.yml` | A host too small to build or to run `anvil` | **The chain anchor.** No chain is started, the ledger runs `ANCHOR_MODE=local`, and the verify endpoint reports `unavailable` with its reason — permanently, by configuration. |
+
+**The live demonstration at <https://climateshield.jarida.io> runs the second
+one**, on a 458 MB droplet. That is why the chain-anchor pillar is demonstrated
+on a local `make up` and not on the public host. Sections 1–8 describe the prod
+path; section 9 describes the smallhost path and what it costs.
+
 ## 1. Prepare the host
 
 Debian or Ubuntu. **4 GB RAM** (on DigitalOcean, `s-2vcpu-4gb`): the peak is
 the first build, which compiles eight Go binaries and bundles the dashboard.
 2 GB is enough to *run* the stack but not reliably to build it — npm has been
-seen to die with "Exit handler never called" on a 2 GB box. If you must use a
-smaller droplet, build the images elsewhere and push them to a registry rather
-than building on the host. As root:
+seen to die with "Exit handler never called" on a 2 GB box. For anything
+smaller, build the images elsewhere and use the smallhost overlay in section 9.
+As root:
 
 ```bash
 apt-get update && apt-get install -y docker.io docker-compose-plugin git
@@ -49,11 +63,7 @@ git clone https://github.com/jarida-io/climateshield.git
 cd climateshield
 ```
 
-`main` is what you want. It carries the chain anchor, the county briefings,
-the annotated scores and the current dashboard as of the merge of #9; before
-that merge it was still the pre-rewrite prototype, and deploying it would have
-put the old system in front of a reader. Confirm what you have either way —
-it costs one command and the failure mode is embarrassing:
+`main` is what you want. Confirm what you have:
 
 ```bash
 git log --oneline -1
@@ -93,7 +103,7 @@ droplet and never leave it.
 ## 4. The short version, on the host
 
 Everything from here — secrets, firewall, build, seed and verification — is in
-one idempotent script. Run it on the host and skip to section 6:
+one idempotent script. Run it on the host and skip to section 8:
 
 ```bash
 ./scripts/deploy-droplet.sh
@@ -140,9 +150,18 @@ fails loudly instead of running with encryption that protects nothing.
 `openmeteo` for live forecasts — free, no API key, but the risk levels will
 then reflect real weather rather than the documented scenario.
 
-## 6. Deploy
+## 6. Make the outbox writable, then deploy
+
+Do the first step or the mock channel fails silently. Every service runs as UID
+10001 and the mock channel appends to `/outbox`, a bind mount of `./var`. Created
+by root it is mode 755 and unwritable by that user, so every alert dispatch dies
+with `permission denied` while the queue fills with retries and the `alerts`
+table stays empty. This ran undetected in production for four weeks; Docker
+Desktop on macOS hides it because its bind mounts ignore the container UID. See
+[NOTES.md](../NOTES.md#three-real-bugs-and-where-each-was-caught).
 
 ```bash
+mkdir -p var && chown 10001:10001 var && chmod 775 var
 docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml ps
 ```
@@ -167,24 +186,6 @@ property this overlay exists to provide.
 
 ## 8. Verify
 
-This whole sequence was rehearsed on 2026-09-10 against the production overlay
-with real generated secrets — not the development placeholder — before it was
-ever pointed at a paid host. What the rehearsal established:
-
-- `up -d --build --wait` brings all eleven containers healthy, and the
-  fail-closed key guard accepts a genuine `PII_KEY_HEX` (it refuses the
-  placeholder, which is the point).
-- `--profile demo run --rm demo` seeds and runs the pipeline from inside the
-  compose network, reaching `postgres`, `registry` and `publicapi` by name.
-- **Caddy is the only process publishing a host port.** Measured with `nc`
-  against the running stack: 80 open; 5432, 8080, 8081, 8082 and 8545 all
-  refused. Postgres, the registry, the public API, the dashboard container and
-  the development chain are reachable only inside the compose network.
-- Through Caddy on port 80: `/health` returns ok, `/v1/ledger/anchors/verify`
-  returns `verified` with the database root and the chain root identical, and
-  `/v1/stats` withholds the two counties under ten.
-
-
 ```bash
 curl -s localhost/health
 curl -s localhost/v1/risk/current | head -c 300
@@ -192,11 +193,42 @@ curl -s localhost/v1/model | grep -o '"note":"[^"]*"' | head -4
 curl -s localhost/v1/ledger/anchors/verify | grep -o '"status":"[a-z]*"'
 ```
 
-The last one should say `verified` once the ledger has swept at least one day.
-`unavailable` means the check could not run and the response says why; it is
-never a fabricated match.
+The last one depends on which overlay you deployed:
+
+- **prod overlay:** `verified`, once the ledger has swept at least one day.
+- **prod + smallhost:** `unavailable`, permanently, with the reason
+  `this deployment runs ANCHOR_MODE=local, so roots are recorded in the anchors
+  table of its own database and there is no independent chain copy to compare
+  against`. That is the designed answer, not a broken one — there is no chain
+  on that host to read back from. It is never a fabricated match.
 
 Then open the dashboard in a browser at your host address.
+
+### What the prod overlay's rehearsal established
+
+Measured on 2026-09-10 against the production overlay with real generated
+secrets — not the development placeholder — before it was ever pointed at a
+paid host:
+
+- `up -d --build --wait` starts **twelve containers**: nine report healthy
+  (Postgres, the six working services, the registry and the public API), the
+  dashboard and Caddy declare no healthcheck and are waited for as running, and
+  the one-shot `migrate` applies migrations and exits 0. The fail-closed key
+  guard accepts a genuine `PII_KEY_HEX` and refuses the placeholder, which is
+  the point. Under the smallhost overlay it is eleven, `anvil` being disabled.
+- `--profile demo run --rm demo` seeds and runs the pipeline from inside the
+  compose network, reaching `postgres`, `registry` and `publicapi` by name.
+- **Caddy is the only process publishing a host port.** Measured with `nc`
+  from outside: 80 open; 5432, 8080, 8081, 8082 and 8545 all refused. Postgres,
+  the registry, the public API, the dashboard container and the development
+  chain are reachable only inside the compose network. That rehearsal had no
+  domain attached, so 80 was the only open port; with a domain in
+  `SITE_ADDRESS`, 443 is open too and 80 redirects to it — measured against
+  <https://climateshield.jarida.io>, which has 80 and 443 open and everything
+  else refused.
+- Through Caddy on port 80: `/health` returned ok, `/v1/ledger/anchors/verify`
+  returned `verified` with the database root and the chain root identical, and
+  `/v1/stats` withheld the two counties under ten.
 
 **Confirm the database is not exposed** — this should fail from your laptop:
 
@@ -205,6 +237,52 @@ nc -vz YOUR_HOST 5432        # expect: refused
 ```
 
 If it connects, the overlay was not applied. Stop and fix it.
+
+---
+
+## 9. The smallhost overlay: a host that can neither build nor run a chain
+
+[`deploy/docker-compose.smallhost.yml`](docker-compose.smallhost.yml) exists for
+a host below the 4 GB floor in section 1 — the live demonstration runs it on a
+458 MB droplet. Its own header comment is the authoritative version; this is the
+summary.
+
+**It does not build.** Every service runs a prebuilt `:deploy-amd64` image
+loaded onto the host with `docker load`. Build them on a workstation for
+`linux/amd64` and ship them:
+
+```bash
+docker buildx build --platform linux/amd64 --build-arg CMD=<svc> \
+  -f deploy/go.Dockerfile -t climateshield-<svc>:deploy-amd64 --load .
+docker save climateshield-*:deploy-amd64 | gzip -1 > images.tar.gz
+scp images.tar.gz root@HOST: && ssh root@HOST \
+  'gunzip -c images.tar.gz | docker load'
+```
+
+Build the dashboard image from an already-built `web/dist` rather than running
+npm under emulation — the bundle is static assets and identical on every
+architecture, so emulating the build only buys you the memory failure.
+
+**It runs no chain.** The foundry image is 585 MB and anvil's own memory is more
+than such a box has spare, so `anvil` is disabled and the ledger runs
+`ANCHOR_MODE=local`: daily Merkle roots are recorded in the anchors table of
+this system's own database and nowhere else.
+
+That is a **real loss of function**, not a configuration detail. The chain
+anchor is one of the three things the funding proposal promised, and on a host
+running this overlay it is not demonstrated. Nothing lies about it: the anchor
+note on `GET /v1/ledger/summary` is computed from the newest anchor row, so it
+says no blockchain is written to by this system; `GET /v1/ledger/anchors/verify`
+reports `unavailable` with that reason; and the dashboard's History view reports
+the same. To demonstrate the pillar, deploy without this overlay on a host with
+room for the chain — 2 GB of RAM is a sensible floor, 4 GB if you also want to
+build there.
+
+```bash
+docker compose -f docker-compose.yml \
+               -f deploy/docker-compose.prod.yml \
+               -f deploy/docker-compose.smallhost.yml up -d
+```
 
 ---
 
@@ -226,9 +304,12 @@ $C down -v                  # stop and DELETE the database
   contract test in CI.
 - **Postgres, the registry API and the development chain are not reachable from
   the internet.** Caddy is the only public process.
-- **The chain the ledger anchors to is a local development chain** started by
-  this deployment. Nothing here writes to any public network, and no surface
-  calls it public, immutable or decentralised.
+- **Under the prod overlay, the chain the ledger anchors to is a local
+  development chain** started by this deployment. Nothing here writes to any
+  public network, and no surface calls it public, immutable or decentralised.
+- **Under the smallhost overlay there is no chain at all.** Daily roots are
+  recorded only in this system's own `anchors` table, which is why the verify
+  endpoint reports `unavailable` there and says why.
 
 ## Before this could hold real data
 
@@ -247,6 +328,3 @@ Not a checklist for today — a statement of what is missing. From
 5. **A demonstrated delivery path.** No SMS has ever been sent by this system,
    so the last hop between an alert and a guardian is unproven. See
    [docs/roadmap.md](../docs/roadmap.md).
-
-The coverage gate used to be on this list, red at 66.8%. It now reads 90.6%
-against the 80% threshold and is green, so it is not.

@@ -25,9 +25,16 @@ unflattering. Everything below was verified by running it, not by intention.
 | Threshold validation | Real, and the most useful thing in here. Two of four published cutoffs are unreachable in the monitored counties; see docs/threshold-validation.md. Encoded as a failing-if-untrue test and exposed on /v1/model. |
 | Pipeline | Real. River-backed ingest → predict → alert, plus a ledger sweep and a briefing sweep, exercised end to end by an integration test that boots all seven services. |
 
-`make verify`, `make up` and `make demo` all pass as of the last commit on this
-branch. The demo output in the README is copied verbatim from an actual run —
-quiet-hours note, zero alert count and all — not retyped or tidied.
+`make verify`, `make up` and `make demo` all pass as of b36d206 on `main`. The
+demo output in the README is pasted unedited from an actual run — reused
+population, 4 consent skips and all — not retyped or tidied.
+
+The deployed instance at <https://climateshield.jarida.io> runs that same `main`
+on a 458 MB droplet, which is too small for the chain. There `ANCHOR_MODE=local`
+and `BRIEFING_GENERATOR=mock`, so the chain-anchor pillar is **not** demonstrated
+on the public host and the briefings there are the deterministic template. That
+is a limit of the host, not of the code: `make up` on a machine with room for
+`anvil` runs all three pillars.
 
 ## What is stubbed, and exactly where
 
@@ -38,8 +45,8 @@ quiet-hours note, zero alert count and all — not retyped or tidied.
 | ERA5 source | `internal/climate/era5/era5.go` | `TODO(Q1)`; constructor returns `ErrNotImplemented`. |
 | Africa's Talking | `internal/notify/at/at.go` | Returns `ErrNotConfigured`. No account, no credentials, by design. |
 | SMPP channel | `internal/notify/smpp/smpp.go` | Wired against `fiorix/go-smpp` and it compiles and binds lazily, but it has **never been tested against a live carrier**. Treat it as unproven. |
-| Public-chain anchor | `internal/ledger/anchor/evm/` | The anchor itself is real, but only against a **local development chain**: `RootAnchor.sol` (compiled once, artifacts committed and hash-checked) receives each day's root via a hand-rolled JSON-RPC client and the root is read back before it is reported. `make up` starts anvil for it; its history is deleted by `make down -v`. Anchoring to a **public** network is deliberately not wired — it needs a funded signing key and the zero-credential rule forbids one. Nothing in this repo writes to any public chain, and no surface may call this chain public, immutable or decentralised. |
-| Language-model briefings | `internal/briefing/openaicompat/`, `internal/briefing/anthropic/` | Both adapters are written and covered by committed golden response shapes served by `httptest`. **Neither has ever produced a briefing on this machine.** `make up-ai` (Ollama + qwen2.5:1.5b) has never been run here — it needs a multi-GB image and model pull — and no live Anthropic API call has ever been made from this repository, deliberately: tests may not touch the network and the repo ships no key. The compose graph for the `ai` profile was validated with `docker compose config` and the image digest resolved with `docker manifest inspect`, and that is the whole of what is known. |
+| Public-chain anchor | `internal/ledger/anchor/evm/` | The anchor itself is real, but only against a **local development chain**: `RootAnchor.sol` (compiled once, artifacts committed and hash-checked) receives each day's root via a hand-rolled JSON-RPC client and the root is read back before it is reported. `make up` starts anvil for it; its history is deleted by `make down`. The live deployment is smaller than anvil needs and runs `ANCHOR_MODE=local`, so on that host the pillar is **not** demonstrated at all. Anchoring to a **public** network is deliberately not wired — it needs a funded signing key and the zero-credential rule forbids one. Nothing in this repo writes to any public chain, and no surface may call this chain public, immutable or decentralised. |
+| Language-model briefings | `internal/briefing/openaicompat/`, `internal/briefing/anthropic/` | Both adapters are written and covered by committed golden response shapes served by `httptest`. The openai-compatible adapter has since been run once against a real local model (`make up-ai`, Ollama + qwen2.5:1.5b) and **every draft it produced was refused by the grounding check** — see "What happened when a real model was actually run" below. **No model-written briefing has ever been served.** The Anthropic adapter has never been called against the live API, deliberately: tests may not touch the network and the repo ships no key. |
 | Kiswahili wording | `internal/briefing/mock/`, `internal/notify/` templates | The Kiswahili text is the implementer's, not a Kiswahili speaker's. The grounding check catches invented facts; it does not judge grammar. Every surface says so and keeps saying so until a named reviewer signs it off. |
 
 ## Assumptions I made
@@ -75,10 +82,10 @@ quiet-hours note, zero alert count and all — not retyped or tidied.
    machines. That is a different publisher and worth a supply-chain look before
    production.
 
-## Two real bugs the integration test caught
+## Three real bugs, and where each was caught
 
-Both would have shipped if I had only written unit tests, and both are the kind
-that look fine in review:
+The first two would have shipped if I had only written unit tests, and both are
+the kind that look fine in review:
 
 1. **River refuses to insert a job kind absent from the inserting client's own
    `Workers` bundle.** The ingestor could never enqueue `risk_predict`; the
@@ -90,7 +97,38 @@ that look fine in review:
    never ran. Fixed by giving each service its own in-process schedule
    (`internal/jobs/schedule.go`) with per-period job uniqueness.
 
-A third defect was in my own tooling: the coverage gate summed the repeated
+The third was caught by none of that. It was caught by deploying to a real host,
+four weeks after it started failing, and it is the worst defect this project has
+found:
+
+3. **The mock channel had never written a single message in production.**
+   Every service in `deploy/go.Dockerfile` runs as UID 10001; `./var`, the host
+   side of the `/outbox` bind mount, is created by root at mode 755. The
+   unprivileged user cannot write to it, so every dispatch failed with
+   `mock: open /outbox/outbox.jsonl: permission denied`. It had been failing for
+   four weeks: **586 `alert_dispatch` jobs retried or discarded, and the
+   `alerts` table empty the whole time.** The public dashboard showed no
+   messaging activity because there was none.
+
+   Nothing in local development catches this. Docker Desktop's bind mounts on
+   macOS ignore the container UID entirely, so the identical compose file works
+   on a laptop and fails on Linux. No unit test, no integration test and no
+   amount of reading the compose file would have found it; only running it on a
+   real host did.
+
+   Fixed in 26f0a1d: `scripts/deploy-droplet.sh` now chowns the directory to
+   10001 before the first start, and `docker-compose.yml` says why the mount
+   needs it so nobody removes the chown as unexplained. Applied on the droplet,
+   37 `would_send` and 4 `skipped_consent` alerts appeared within a minute.
+
+   It is worth being blunt about what this was. This project's central claim is
+   that no output implies an action that did not happen — and for four weeks a
+   deployment of it reported an empty messaging surface that was empty for a
+   reason nobody had noticed. The disclosure held: nothing ever claimed a
+   message had been sent. The plumbing did not.
+
+And one in my own tooling, which is not a bug in the system but belongs here
+anyway: the coverage gate summed the repeated
 per-binary blocks that `-coverpkg` produces, reporting 7.6% when real coverage
 was ~72%. It now merges by block, keeping the highest hit count, the way
 `go tool cover` does.
@@ -111,16 +149,19 @@ place, with boundary tests.
 
 ## Coverage, per package
 
-**Total: 90.6% (2819/3113 statements). The gate is 80% and is GREEN.**
+**Total: 90.6% of roughly 3,120 statements. The gate is 80% and is GREEN.**
 Generated code (`internal/gen`, `internal/store/db`) is excluded; nothing else
-is. Reproduce with:
+is. The exact covered count moves by a statement or two between runs — the
+profile is collected with `-covermode=atomic` across concurrently running
+packages — so the figure to compare against the gate is the percentage, and
+the number below is whatever your own run prints. Reproduce with:
 
 ```sh
 make test
 go run ./scripts/covergate -profile coverage.out -threshold 80
 ```
 
-This is up from a red 66.8% one branch ago. It was closed by writing tests, not
+This is up from a red 66.8% before this work. It was closed by writing tests, not
 by moving the threshold or adding an exclusion — which was the stated policy
 here when the number was embarrassing, and the policy did not change once it
 stopped being embarrassing.
@@ -166,7 +207,7 @@ package. Where the two disagree, say which one you mean.
 | `internal/notify` | 97.5% | |
 | `internal/notify/at` | 100.0% | stub |
 | `internal/notify/mock` | 74.1% | |
-| `internal/notify/notifier` | 79.9% | |
+| `internal/notify/notifier` | 80.5% | |
 | `internal/notify/smpp` | 58.8% | **weakest**, and untested against a carrier |
 | `internal/platform/clock` | 100.0% | |
 | `internal/platform/config` | 75.0% | |
@@ -197,7 +238,7 @@ behaviour a test cannot establish at all (see below).
   accuracy claim is made anywhere in this repository**. Do not let a demo imply
   otherwise.
 - **The reference climatology has not been rebuilt from the archive here.**
-  `make climatology` was never run in this branch, so byte-identical
+  `make climatology` has never been run in this repository, so byte-identical
   regeneration is unproven. What is proven without a network: the generator
   re-emits the committed artifact byte for byte
   (`TestEncoderReproducesTheCommittedArtifactByteForByte`) and its windowing
@@ -211,9 +252,9 @@ behaviour a test cannot establish at all (see below).
   quantiles are exact multiples of 1/140 and all 1,260 rainfall quantiles are
   exactly one decimal. Consistent is not the same as confirmed; only a rebuild
   confirms it.
-- **Nothing has run at scale.** Five counties, 28 fictional children, 273
-  ledger leaves. No load test, no query plan review, no index tuning beyond the
-  obvious. `climate_observations` has no partitioning yet.
+- **Nothing has run at scale.** Five counties, 28 fictional children, a few
+  hundred ledger leaves. No load test, no query plan review, no index tuning
+  beyond the obvious. `climate_observations` has no partitioning yet.
 - **The ledger's key separation is honest but modest.** Per-child HMAC keys
   live in a separate `sealed` schema that only the ledger's query file may
   reference (grep-enforced), but it is the same database instance and the same
@@ -224,17 +265,25 @@ behaviour a test cannot establish at all (see below).
 - **The dashboard is nine views and no test runner.** `web/` has no test
   framework at all, so none of the TypeScript is covered by anything; adding
   one is a stack decision that has not been taken. The basemap still needs
-  internet, dark mode is still not implemented, and the stale-data banner's
-  logic has been reviewed but never exercised against a real `X-Data-Stale`
-  response — producing one means stopping the database under the running
-  stack, which nobody has done yet.
-- **No language model has ever written a briefing here.** The default
-  deterministic template is exercised constantly; the two model adapters are
-  exercised only against committed golden response shapes. `make up-ai` has
-  never been run on this machine and no live Anthropic call has ever been made.
-  The grounding check is well tested against adversarial drafts
-  (`go test ./internal/briefing -run TestAdversarialDrafts`), but every one of
-  those drafts was written by a human pretending to be a model.
+  internet and dark mode is still not implemented.
+- **The stale-data banner has not been watched render.** The endpoint half of
+  that path *is* demonstrated: `docker compose stop postgres`, then
+  `curl -si localhost:8080/v1/risk/current` returns `200` with
+  `X-Data-Stale: true` and a complete last-good body while `/health` returns
+  `503`; `docker compose start postgres` restores `200` with no stale header.
+  Run and observed on 2026-09-11. What nobody has watched is the dashboard
+  rendering its banner during that outage, so the browser half remains
+  unverified.
+- **No language model has ever written a briefing that this system served.**
+  One has now written six drafts and the grounding check refused all six — see
+  "What happened when a real model was actually run" below, which is the
+  measurement and also the least flattering thing in this file. On the current
+  default the language model contributes a rejection notice and nothing else.
+  No live Anthropic call has ever been made. The grounding check is well tested
+  against adversarial drafts
+  (`go test ./internal/briefing -run TestAdversarialDrafts`), and until
+  2026-09-10 every one of those drafts had been written by a human pretending to
+  be a model.
 - **The Kiswahili has had no native-speaker review.** Both the SMS templates
   and the briefing template are the implementer's Kiswahili. This is the
   cheapest outstanding item on the list and the one most likely to embarrass
@@ -330,6 +379,11 @@ reanalysis, used to flag climatological extremes; no disease model has been
 trained or validated."* Anyone who wants to call that "AI" should be
 corrected — including in your own slides.
 
+The canonical long-form answer is [docs/model-card.md](docs/model-card.md):
+intended use, method, operating points, evaluation and limitations, including
+that reachability is the only evaluation performed. The reachability finding
+itself is [docs/threshold-validation.md](docs/threshold-validation.md).
+
 ## On calling it "AI"
 
 There are now two things in this repository that a reader could point at and
@@ -359,10 +413,12 @@ is fair. Four things bound it:
   to a guardian — SMS comes only from the fixed, length-checked templates.
 
 And the honest caveat, which belongs in the same breath: **no model has ever
-written one of these on this machine.** Both adapters are tested against
-committed golden response shapes, never a live model. Until someone runs
-`make up-ai` and watches it, "the generative pillar works" means "the plumbing
-and the refusal path work".
+written one of these that this system served.** A real model has now been
+watched, and what was watched was six refusals — the section immediately below
+records it. So "the generative pillar works" still means "the plumbing and the
+refusal path work", with the refusal path now demonstrated against a live model
+rather than only against fixtures. The Anthropic adapter remains tested only
+against committed golden response shapes.
 
 **The risk scorer is not AI, in either mode.** Neither the four published
 threshold rules nor the fitted climatology is machine learning; nothing was
@@ -374,6 +430,10 @@ The sentence that covers both: *"a language model can write the county
 briefing, and every sentence it writes is checked against the aggregates it was
 given; the risk levels themselves come from published threshold rules and a
 fitted weather baseline, neither of which is machine learning."*
+
+For the scorer half of that sentence, the canonical documents are
+[docs/model-card.md](docs/model-card.md) and
+[docs/threshold-validation.md](docs/threshold-validation.md).
 
 ### What happened when a real model was actually run
 
@@ -436,9 +496,13 @@ else rather than on effort.
    untested boundary: get an SMPP or Africa's Talking sandbox delivering to one
    handset, with delivery receipts recorded, before anyone plans a pilot.
    Nothing else in the system is worth much if the last hop does not work.
-5. **Get the Kiswahili reviewed, and run `make up-ai` once.** Two small jobs
-   that convert two "unproven" labels into "verified". A named Kiswahili
-   reviewer signs off the SMS and briefing templates; a human runs the ai
-   profile and watches a local model write one briefing and, ideally, watches
-   the grounding check refuse one. Neither is hard. Both are currently caveats
-   in front of an assessor.
+5. **Get the Kiswahili reviewed.** A named Kiswahili speaker signs off the SMS
+   and briefing templates. It is the cheapest item on this list and the one
+   most likely to embarrass the project in front of the people it is for.
+6. **Find a model that can actually clear the grounding check.** `make up-ai`
+   has been run; qwen2.5:1.5b failed six for six, so what is still unproven is
+   not the plumbing but whether any model this project could plausibly deploy
+   writes a draft the check accepts. That is a model-selection question — try a
+   larger open-weights model, then decide whether the generative pillar is worth
+   shipping at all if none passes. Reporting "no model has yet passed" is a
+   perfectly respectable answer; quoting a pass rate before one exists is not.

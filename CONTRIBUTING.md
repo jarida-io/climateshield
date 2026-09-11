@@ -84,9 +84,9 @@ the funding agreement:
 
 ## Reporting issues
 
-Use the issue templates in `.github/ISSUE_TEMPLATE`. For anything with security
-or privacy implications — especially a suspected data leak on a public surface
-— email **hello@jarida.io** instead of filing a public issue.
+Use the bug-report template in `.github/ISSUE_TEMPLATE`. For anything with
+security or privacy implications — especially a suspected data leak on a public
+surface — email **hello@jarida.io** instead of filing a public issue.
 
 ## Community
 

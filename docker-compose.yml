@@ -74,7 +74,7 @@ services:
   # ledger's daily Merkle roots. It is NOT a public network: its chain id is
   # 31337, its accounts are anvil's well-known unlocked development accounts
   # (so no key is configured anywhere), and its history is deleted by
-  # `make down -v` along with the database. Every surface that mentions it
+  # `make down` along with the database. Every surface that mentions it
   # says so. Pinned by digest; the same string is asserted by a test.
   anvil:
     image: ghcr.io/foundry-rs/foundry:v1.5.1@sha256:3a70bfa9bd2c732a767bb60d12c8770b40e8f9b6cca28efc4b12b1be81c7f28e

@@ -237,7 +237,7 @@ func anchorNote(mode string, rows []db.LedgerRootSummaryRow) string {
 			"Daily roots are published to the RootAnchor contract at %s on chain id %d (%s), and read back from it before this system reports them as anchored.",
 			address, chainID, evm.Label(chainID))
 		if evm.IsDevChain(chainID) {
-			note += " That chain is started by this deployment's own docker compose: its history does not outlive `make down -v`, and nothing here is written to any public network."
+			note += " That chain is started by this deployment's own docker compose: its history does not outlive `make down`, and nothing here is written to any public network."
 		}
 		return note
 	}
