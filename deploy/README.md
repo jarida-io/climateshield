@@ -49,15 +49,14 @@ git clone https://github.com/jarida-io/climateshield.git
 cd climateshield
 ```
 
-**Check what the default branch actually contains before you deploy it.** At
-the time of writing `main` is still the pre-rewrite prototype: the chain
-anchor, the county briefings, the annotated scores and the current dashboard
-are all on `feat/climatology-model` and are not on `main` until that branch is
-merged. Deploying `main` today would deploy the old system. Confirm with
-`git log --oneline -1` and check out the ref you actually mean:
+`main` is what you want. It carries the chain anchor, the county briefings,
+the annotated scores and the current dashboard as of the merge of #9; before
+that merge it was still the pre-rewrite prototype, and deploying it would have
+put the old system in front of a reader. Confirm what you have either way —
+it costs one command and the failure mode is embarrassing:
 
 ```bash
-git checkout feat/climatology-model   # until this is merged into main
+git log --oneline -1
 ```
 
 Two things this stack starts that are easy to overlook when reading the base

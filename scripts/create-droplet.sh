@@ -89,8 +89,8 @@ done
 
 # --- Deploy -----------------------------------------------------------------
 # The host does its own clone so the droplet, not this laptop, is the thing
-# that knows how to rebuild itself. REF matters: main is not necessarily the
-# ref you want (see deploy/README.md section 2).
+# that knows how to rebuild itself. REF defaults to whatever you have checked
+# out, so check out the ref you mean before running this.
 say "Deploying ref '$REF' on the droplet"
 ssh -o StrictHostKeyChecking=accept-new "root@$IP" \
   "REF='$REF' REPO='$REPO' bash -s" <<'REMOTE'
