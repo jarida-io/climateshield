@@ -5,11 +5,11 @@
 > *A fitted statistical baseline over a decade of reanalysis, used to flag
 > climatological extremes; no disease model has been trained or validated.*
 
-That sentence is the whole claim. Everything below expands it, and nothing
-below widens it.
+That sentence is the whole claim. Everything below expands it; nothing below
+widens it.
 
-This card covers both scorers in the system, because both are in the alerting
-path depending on configuration:
+This card covers both scorers, because either can be in the alerting path
+depending on configuration:
 
 | | `rules` (default) | `climatology` |
 |---|---|---|
@@ -27,10 +27,9 @@ tier** — see `internal/predict/annotate.go` and the test
 
 **In scope.** Flagging that a county's next 14-day forecast window is
 climatologically unusual, or crosses a cutoff published in the funding
-proposal, so that a health officer can decide whether to prioritise
-outreach for children with due or overdue immunizations in that county.
-Every score is published with the driver, the driver value and a one-line
-reason a health officer can dispute.
+proposal, so a health officer can decide whether to prioritise outreach for
+children with due or overdue immunizations there. Every score carries its
+driver, the driver value and a one-line reason the officer can dispute.
 
 **Out of scope, and unsupported.**
 
@@ -44,8 +43,8 @@ reason a health officer can dispute.
 
 **Users.** County health officers and programme staff, through the public
 dashboard and the read-only public API. There is no automated action: an
-elevated score renders and records a message on a mock channel, and a person
-decides what happens next.
+elevated score renders and records a message on a mock channel that transmits
+nothing, and a person decides what happens next.
 
 ## Reference data
 
@@ -58,10 +57,6 @@ decides what happens next.
 | Geography | one point per county, at the county centroid: Nairobi, Kisumu, Mombasa, Nakuru, Eldoret |
 | Variables | `precipitation_sum`, `temperature_2m_max`, `temperature_2m_min`, daily, Africa/Nairobi calendar |
 | Records | 3,653 days per county |
-
-ERA5 is a reanalysis product, not a station observation. A single centroid
-point does not represent a whole county, and reanalysis smooths local
-extremes. Both facts are limitations, listed again below.
 
 ## Method
 
@@ -108,15 +103,15 @@ make climatology          # rebuild it from the archive; prints the SHA-256 it w
 `reference_generator`, `reference_windows` and `quantile_steps` so the running
 system's copy can be checked against this card.
 
-`make climatology` is the only thing that ever reads the archive, and it runs
-only when a person types it. It needs no account and no key. **No test in this
+`make climatology` is the only thing that reads the archive, it needs no
+account or key, and it runs only when a person types it. **No test in this
 repository touches the network**: the generator's HTTP path is tested against
 `httptest` with committed synthetic fixtures
 (`cmd/buildclimatology/testdata/golden/`, which say plainly that their numbers
 are made up). Other commands do reach the internet for other reasons —
 `make demo-live` and `CLIMATE_SOURCE=openmeteo` fetch a live *forecast*,
-`make lint` downloads a linter, `make up` pulls container images — so this is
-"the only archive read", not "the only network call".
+`make lint` downloads a linter, `make up` pulls images — so this is "the only
+archive read", not "the only network call".
 
 Two things are proven in CI without a network, and they are what make the
 digest meaningful:
@@ -159,7 +154,8 @@ for that county and month, a MEDIUM roughly 1-in-10:
 **Driver choice per disease (`climatology`).** Cholera and malaria track peak
 rainfall; meningitis tracks the mean daily maximum; pneumonia tracks the mean
 daily **minimum**, because the hazard is cold stress and Kenyan daily maxima
-stay mild even where nights are cold. See docs/threshold-validation.md.
+stay mild even where nights are cold. See
+[threshold-validation.md](threshold-validation.md).
 
 ## Evaluation
 
@@ -172,14 +168,14 @@ cutoff can be reached at all in the reference record. Two of the four cannot:
 |---|---|
 | Cholera ≥ 60 mm | yes — the wettest 14-day peak in the record is 138.3 mm |
 | Malaria ≥ 40 mm | yes |
-| Pneumonia ≤ 16 °C | **no** — the lowest 14-day mean maximum in the record is 19.9 °C |
+| Pneumonia ≤ 16 °C | **no** — the lowest 14-day mean maximum is 19.9 °C |
 | Meningitis ≥ 39 °C | **no** — the highest is 35.2 °C |
 
 Method, per-county firing rates and the recommendation are in
-docs/threshold-validation.md. The finding is enforced by
-`TestPublishedTemperatureThresholdsAreUnreachableInReferenceDecade`, which
-fails if it ever stops being true, and is published per rule on `/v1/model`
-with the number each verdict was measured against.
+[threshold-validation.md](threshold-validation.md). The finding is enforced by
+`TestPublishedTemperatureThresholdsAreUnreachableInReferenceDecade` and
+published per rule on `/v1/model` with the number each verdict was measured
+against.
 
 **Not measured, and not claimed anywhere in this repository:** accuracy,
 sensitivity, specificity, positive predictive value, lead time, calibration
@@ -199,32 +195,29 @@ same as correct.
   300 windows, not a physical maximum. A cutoff unreached in this record is
   not proven impossible — though a 14-day mean below the coldest single day in
   the record is impossible regardless of record length.
-- **One point per county.** ERA5 at a centroid is not a station observation
-  and a county is not climatically uniform.
+- **One point per county.** ERA5 is a reanalysis product, not a station
+  observation; a centroid is not a county, and reanalysis smooths local
+  extremes.
 - **Five counties only.** Outside them there is no reference distribution and
   the scorer says so rather than scoring LOW.
 - **The generator drops the final window of the record.** Its loop takes a
   window only while at least one further day follows it, so December carries
-  296 windows per decade rather than 297 — 18,195 windows in total rather
-  than 18,200. It is preserved deliberately so the committed artifact stays
-  reproducible, and pinned by
-  `TestWindowLoopStopsOneWindowShortOfTheRecord`.
+  296 windows per decade rather than 297 — 18,195 in total rather than 18,200.
+  Preserved deliberately so the committed artifact stays reproducible, and
+  pinned by `TestWindowLoopStopsOneWindowShortOfTheRecord`.
 - **Sub-daily exposure is invisible.** A 14-day mean cannot express a single
   severe night, and daily aggregates cannot express a downpour's intensity.
 - **Reanalysis is revised.** The archive may return different values for the
   same historical days in future, which would change the artifact's digest.
 
-## Provenance recorded with every score
+## Provenance and maintenance
 
-Each row in `risk_scores` carries the predictor name, the predictor version,
-the driver, the driver value, the forecast date, the window length and — where
-the reference record covers the county and month — the exceedance and a
-one-line explanation. A score can therefore always be traced to a number, a
-method and a sentence.
-
-## Maintenance
+Each row in `risk_scores` carries the predictor name and version, the driver,
+the driver value, the forecast date, the window length and — where the
+reference record covers that county and month — the exceedance and a one-line
+explanation. A score can always be traced to a number, a method and a sentence.
 
 Owner: the ClimateShield engineering team. This card is updated in the same
 commit as any change to `internal/predict`, to the reference artifact, or to
-the artifact's digest. The published thresholds are contractual: changing one
-requires a proposal amendment, not a commit.
+its digest. The published thresholds are contractual: changing one requires a
+proposal amendment, not a commit.

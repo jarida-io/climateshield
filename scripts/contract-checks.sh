@@ -56,7 +56,7 @@ if [ -d internal/publicapi ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. No test may reach the network (CLAUDE.md rule 5). Tests run against
+# 4. No test may reach the network. Tests run against
 #    httptest servers, committed fixtures and testcontainers only. A test that
 #    names a hosted RPC endpoint, a model API or a public chain is a test that
 #    will pass on a laptop and fail — or worse, quietly spend money and leak

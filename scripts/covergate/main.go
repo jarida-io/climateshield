@@ -4,7 +4,7 @@
 // coverage profile. It exists because Codecov (paid SaaS) is a forbidden
 // dependency; the gate must be first-party and auditable.
 //
-// Policy (documented in CLAUDE.md and README): total statement coverage over
+// Policy (documented in CONTRIBUTING.md and README): total statement coverage over
 // ./internal/... must be >= the threshold. Generated code is excluded:
 //
 //	internal/gen       (protoc-gen-go / protoc-gen-connect-go output)

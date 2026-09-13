@@ -8,8 +8,6 @@ coverage.html
 # wrong on every architecture but the machine that built it.
 /covergate
 
-# Worktrees created by tooling that runs agents against this checkout.
-/.claude/worktrees/
 
 # Environment — .env.example is committed, real env never is
 .env

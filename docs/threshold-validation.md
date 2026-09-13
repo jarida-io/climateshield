@@ -23,30 +23,21 @@ same features the predictor computes at runtime, using the same window length:
 
 That gives 3,639 windows per county and 18,195 in total (the generator takes a
 window only while at least one further day follows it, so the final window of
-the record is not counted — see docs/model-card.md). The published cutoffs
-were then applied to each window.
+the record is not counted — see [model-card.md](model-card.md)). The published
+cutoffs were then applied to each window.
 
-Reproduce with `go test ./internal/predict -run Climatology`, or rebuild the
-reference data itself from the archive API (free, no key):
+Reproduce the result with `go test ./internal/predict -run Climatology`, or
+rebuild the reference table it uses from the archive API (free, no key):
 
 ```sh
 make climatology-digest   # hash the committed table; no network request
 make climatology          # rebuild it from the archive; prints the SHA-256 it wrote
 ```
 
-| | |
-|---|---|
-| Derived table | `internal/predict/climatologydata/kenya-5county-2015-2024.json` |
-| SHA-256 | `acc41f6890e10eccd16e0052f533a3e7737dcd0da71d723d968c815541c41c8d` |
-| Generator | `cmd/buildclimatology` (the path in the table's own `generated_by` field) |
-| Contents | 5 counties x 12 months x 3 features x 21 quantiles = 3,780 stored quantiles |
-
-`make climatology` is the only thing in this repository that reads the
-archive, and no test makes that request. The table carries its own provenance
-and licence fields, and `GET /v1/model`
-publishes the same digest for the copy embedded in the running binary, so the
-two can be compared. The full method, operating points and limitations are in
-docs/model-card.md.
+The table is `internal/predict/climatologydata/kenya-5county-2015-2024.json`,
+SHA-256 `acc41f6890e10eccd16e0052f533a3e7737dcd0da71d723d968c815541c41c8d`. The
+full method, provenance, operating points and limitations are in
+[model-card.md](model-card.md).
 
 ## Result
 
@@ -111,9 +102,8 @@ it uses the daily minimum, for the reason above.
   cannot fire, and for the two that can.
 - The dashboard's Model view leads with it, under "How we checked our own
   proposal".
-- docs/model-card.md records it as the ONLY evaluation this project has
-  performed, alongside an explicit statement that no outcome validation
-  exists.
+- [model-card.md](model-card.md) records it as the only evaluation this
+  project has performed.
 
 ## Recommendation
 
@@ -132,12 +122,10 @@ it uses the daily minimum, for the reason above.
 
 ## Limitations
 
-- ERA5 reanalysis at a single county centroid is not a station observation and
-  smooths local extremes; a county is not climatically uniform.
-- Ten years is short for tail behaviour. A cutoff unreached in this record is
-  not proven impossible, though a 14-day mean below the coldest observed
-  single day is impossible regardless of record length.
-- **None of this validates any threshold against disease outcomes.** It shows
-  only whether a cutoff is reachable in the climate record. Whether the
-  reachable ones actually predict outbreaks is unknown and untested, and this
-  project makes no claim that they do.
+**None of this validates any threshold against disease outcomes.** It shows
+only whether a cutoff is reachable in the climate record. Whether the reachable
+ones predict outbreaks is unknown and untested, and this project makes no claim
+that they do.
+
+The reference record's own limits — ERA5 at a single county centroid, ten years
+of tail behaviour — are listed in [model-card.md](model-card.md).
