@@ -336,3 +336,37 @@ Ordered by how much each changes whether the system helps anyone.
    for six, so what is unproven is not the plumbing but whether any deployable
    model writes a draft the check accepts. Reporting "no model has yet passed"
    is respectable; quoting a pass rate before one exists is not.
+
+## Risk, and what a real pilot would require
+
+The list above is what I would do next to the demonstrator. It is not the same list
+as what a pilot with real children's data would require, which is considerably longer
+and mostly not about features.
+
+Three documents hold that work:
+
+- [docs/threat-model.md](docs/threat-model.md) — the trust boundaries, what crosses
+  each one, and what is not checked. Written for the system as built *and* for the
+  system the UNICEF submission commits to, because several controls that are adequate
+  for a fictional population are the largest risks the moment a real record arrives.
+- [docs/risk-register.md](docs/risk-register.md) — 114 scored risks across fourteen
+  classes, each with an owner and a file, test or submission page as evidence. Risks
+  that are already handled well appear too, as one-line rows, so the register can be
+  read as evidence rather than only as a list of faults.
+- [docs/go-live-gates.md](docs/go-live-gates.md) — the subset that must be
+  demonstrably true before one real child's record is entered, as falsifiable gates in
+  the same style as the roadmap.
+
+[docs/compliance-map.md](docs/compliance-map.md) maps the external obligations — the
+Data Protection Act and its Regulations, ODPC guidance, the Children Act 2022, the
+three signed company policies and the Funding Agreement's technical clauses — to where
+each is met or outstanding.
+
+The uncomfortable summary, stated here because this file is where uncomfortable things
+go: the engineering is careful, and the system has no authentication of any kind. The
+base compose file publishes an unauthenticated, mutating registry and a
+known-password Postgres on every interface, and the only thing standing between that
+and the internet is which command the operator typed. Erasure is implemented and has
+no caller. The right-to-erasure guarantee rests on destroying a key that is stored in
+cleartext beside the data it protects. None of this matters for 28 fictional children.
+All of it matters on day one of a pilot.

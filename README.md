@@ -19,7 +19,10 @@ Fund. [Apache 2.0](LICENSE).
 Read next: [NOTES.md](NOTES.md) — what is stubbed and what is thin ·
 [docs/model-card.md](docs/model-card.md) — is it a model ·
 [docs/threshold-validation.md](docs/threshold-validation.md) — are the thresholds
-any good · [docs/roadmap.md](docs/roadmap.md) — what each pillar needs next.
+any good · [docs/roadmap.md](docs/roadmap.md) — what each pillar needs next ·
+[docs/risk-register.md](docs/risk-register.md) — what could go wrong, and who owns it ·
+[docs/go-live-gates.md](docs/go-live-gates.md) — what must be true before real
+children's data enters.
 
 ## See it running
 
