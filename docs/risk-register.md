@@ -6,7 +6,9 @@ Every risk this project carries, across the data lifecycle, for the system as bu
 system the UNICEF submission (RFPS-NYH-2026-503931) commits to.
 
 Read with [threat-model.md](threat-model.md), which describes the boundaries these risks sit
-on, and [go-live-gates.md](go-live-gates.md), which is the subset that blocks a real pilot.
+on, [risk-feasibility.md](risk-feasibility.md), which assesses how readily each one can be acted
+on and in what order, and [go-live-gates.md](go-live-gates.md), which is the subset that blocks a
+real pilot.
 
 ## How to read a row
 

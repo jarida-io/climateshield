@@ -9,7 +9,8 @@ A gate here is a real thing that can pass or fail: a test name, a command whose 
 compared, a document with a reference number, or a named person's signature. "Looks better"
 is not a gate. This follows the convention already set in [roadmap.md](roadmap.md).
 
-Each gate names the risk it closes, from [risk-register.md](risk-register.md).
+Each gate names the risk it closes, from [risk-register.md](risk-register.md). [risk-feasibility.md](risk-feasibility.md) sequences the work behind these gates by how
+readily each risk can be acted on.
 
 **No dates.** Several gates depend on a regulator, a county or a carrier, none of which is
 ours to schedule. The order within each tier is the order they should be attempted, because

@@ -353,6 +353,9 @@ Three documents hold that work:
   classes, each with an owner and a file, test or submission page as evidence. Risks
   that are already handled well appear too, as one-line rows, so the register can be
   read as evidence rather than only as a list of faults.
+- [docs/risk-feasibility.md](docs/risk-feasibility.md) — the same 115 risks assessed a
+  second time, for how readily each can be acted on: effort, who controls it, what
+  blocks it, and the order the work falls into.
 - [docs/go-live-gates.md](docs/go-live-gates.md) — the subset that must be
   demonstrably true before one real child's record is entered, as falsifiable gates in
   the same style as the roadmap.
